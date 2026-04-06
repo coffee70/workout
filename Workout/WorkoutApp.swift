@@ -1,17 +1,13 @@
-//
-//  WorkoutApp.swift
-//  Workout
-//
-//  Created by Evan Haeick on 4/6/26.
-//
-
 import SwiftUI
 
 @main
 struct WorkoutApp: App {
+    @StateObject private var store = AppStore()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environmentObject(store)
         }
     }
 }

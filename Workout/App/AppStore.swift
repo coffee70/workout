@@ -1,0 +1,386 @@
+import Foundation
+import Combine
+import SwiftUI
+
+@MainActor
+final class AppStore: ObservableObject {
+    @Published private(set) var appData: AppData = .empty()
+    @Published var presentedWorkoutSessionID: UUID?
+    @Published var errorMessage: String?
+
+    private let persistence = PersistenceService()
+    private let sessionFactory = WorkoutSessionFactory()
+    private let historyService = HistoryQueryService()
+
+    init() {
+        load()
+    }
+
+    var currentRegimen: Regimen? {
+        appData.regimens.first(where: { $0.id == appData.currentRegimenId }) ?? appData.regimens.first(where: \.isCurrent)
+    }
+
+    var activeWorkoutSession: WorkoutSession? {
+        guard let id = appData.activeWorkoutSessionId else { return nil }
+        return appData.workoutSessions.first(where: { $0.id == id })
+    }
+
+    var activeLocations: [Location] {
+        appData.locations.filter { !$0.isArchived }.sorted { $0.name < $1.name }
+    }
+
+    var activeMovements: [Movement] {
+        appData.movements.filter { !$0.isArchived }.sorted { $0.name < $1.name }
+    }
+
+    var activeVariations: [Variation] {
+        appData.variations.filter { !$0.isArchived }.sorted { $0.name < $1.name }
+    }
+
+    var recentSessions: [WorkoutSession] {
+        appData.workoutSessions.sorted { $0.startedAt > $1.startedAt }
+    }
+
+    func variations(for movementId: UUID) -> [Variation] {
+        activeVariations.filter { $0.movementId == movementId }
+    }
+
+    func movementName(_ id: UUID?) -> String {
+        appData.movements.first(where: { $0.id == id })?.name ?? "Unknown Movement"
+    }
+
+    func variationName(_ id: UUID?) -> String {
+        appData.variations.first(where: { $0.id == id })?.name ?? "Select Variation"
+    }
+
+    func locationName(_ id: UUID?) -> String {
+        appData.locations.first(where: { $0.id == id })?.name ?? "Unknown Gym"
+    }
+
+    func history(for session: WorkoutSession, entry: WorkoutExerciseEntry) -> HistoryResult {
+        let lookupLocation = entry.viewedHistoryLocationId ?? session.locationId
+        return historyService.lookup(
+            variationId: entry.performedVariationId,
+            movementId: entry.performedMovementId,
+            currentLocationId: lookupLocation,
+            excluding: session.id,
+            in: appData.workoutSessions
+        )
+    }
+
+    func load() {
+        do {
+            appData = try persistence.load()
+        } catch {
+            appData = SeedData.make()
+            errorMessage = "Failed to load saved data. Seed data was restored."
+        }
+    }
+
+    func replaceAllData(with newData: AppData) {
+        appData = newData
+        save()
+    }
+
+    func startWorkout(day: RegimenDay, location: Location) {
+        let session = sessionFactory.makeSession(
+            regimen: currentRegimen,
+            day: day,
+            location: location,
+            movements: appData.movements,
+            variations: appData.variations
+        )
+        appData.workoutSessions.insert(session, at: 0)
+        appData.activeWorkoutSessionId = session.id
+        presentedWorkoutSessionID = session.id
+        touch()
+        Haptics.success()
+    }
+
+    func presentWorkout(sessionId: UUID) {
+        presentedWorkoutSessionID = sessionId
+    }
+
+    func dismissPresentedWorkout() {
+        presentedWorkoutSessionID = nil
+    }
+
+    func finishWorkout(sessionId: UUID) {
+        guard let sessionIndex = appData.workoutSessions.firstIndex(where: { $0.id == sessionId }) else { return }
+        appData.workoutSessions[sessionIndex].status = .completed
+        appData.workoutSessions[sessionIndex].endedAt = .now
+        appData.workoutSessions[sessionIndex].updatedAt = .now
+        if appData.activeWorkoutSessionId == sessionId {
+            appData.activeWorkoutSessionId = nil
+        }
+        if presentedWorkoutSessionID == sessionId {
+            presentedWorkoutSessionID = nil
+        }
+        touch()
+        Haptics.success()
+    }
+
+    func abandonWorkout(sessionId: UUID) {
+        guard let sessionIndex = appData.workoutSessions.firstIndex(where: { $0.id == sessionId }) else { return }
+        appData.workoutSessions[sessionIndex].status = .abandoned
+        appData.workoutSessions[sessionIndex].endedAt = .now
+        appData.workoutSessions[sessionIndex].updatedAt = .now
+        if appData.activeWorkoutSessionId == sessionId {
+            appData.activeWorkoutSessionId = nil
+        }
+        if presentedWorkoutSessionID == sessionId {
+            presentedWorkoutSessionID = nil
+        }
+        touch()
+    }
+
+    func updateViewedHistoryLocation(sessionId: UUID, entryId: UUID, locationId: UUID) {
+        mutateEntry(sessionId: sessionId, entryId: entryId) { entry in
+            entry.viewedHistoryLocationId = locationId
+            entry.viewedHistoryLocationNameSnapshot = locationName(locationId)
+        }
+        Haptics.light()
+    }
+
+    func cycleVariation(sessionId: UUID, entryId: UUID, direction: Int) {
+        guard let entry = workoutEntry(sessionId: sessionId, entryId: entryId) else { return }
+        let allVariations = variations(for: entry.performedMovementId)
+        guard !allVariations.isEmpty else { return }
+        guard let currentIndex = allVariations.firstIndex(where: { $0.id == entry.performedVariationId }) else {
+            setVariation(sessionId: sessionId, entryId: entryId, variation: allVariations[0])
+            return
+        }
+        let nextIndex = (currentIndex + direction + allVariations.count) % allVariations.count
+        setVariation(sessionId: sessionId, entryId: entryId, variation: allVariations[nextIndex])
+    }
+
+    func setVariation(sessionId: UUID, entryId: UUID, variation: Variation) {
+        mutateEntry(sessionId: sessionId, entryId: entryId) { entry in
+            entry.performedVariationId = variation.id
+            entry.performedVariationNameSnapshot = variation.name
+            entry.performedMovementId = variation.movementId
+            entry.performedMovementNameSnapshot = movementName(variation.movementId)
+        }
+        Haptics.medium()
+    }
+
+    func addSet(sessionId: UUID, entryId: UUID) {
+        mutateEntry(sessionId: sessionId, entryId: entryId) { entry in
+            let previous = entry.sets.sorted { $0.setNumber < $1.setNumber }.last
+            let setNumber = (previous?.setNumber ?? 0) + 1
+            let now = Date()
+            entry.sets.append(
+                SetEntry(
+                    id: UUID(),
+                    setNumber: setNumber,
+                    reps: previous?.reps ?? 8,
+                    weight: previous?.weight ?? 0,
+                    weightUnit: previous?.weightUnit ?? appData.preferredWeightUnit,
+                    rpe: previous?.rpe,
+                    note: previous?.note,
+                    completed: true,
+                    createdAt: now,
+                    updatedAt: now
+                )
+            )
+            entry.status = .inProgress
+        }
+        Haptics.light()
+    }
+
+    func updateSet(sessionId: UUID, entryId: UUID, setId: UUID, reps: Int? = nil, weight: Double? = nil) {
+        mutateEntry(sessionId: sessionId, entryId: entryId) { entry in
+            guard let index = entry.sets.firstIndex(where: { $0.id == setId }) else { return }
+            if let reps {
+                entry.sets[index].reps = reps
+            }
+            if let weight {
+                entry.sets[index].weight = weight
+            }
+            entry.sets[index].updatedAt = .now
+            entry.status = .inProgress
+        }
+    }
+
+    func deleteSet(sessionId: UUID, entryId: UUID, setId: UUID) {
+        mutateEntry(sessionId: sessionId, entryId: entryId) { entry in
+            entry.sets.removeAll { $0.id == setId }
+            for index in entry.sets.indices {
+                entry.sets[index].setNumber = index + 1
+            }
+            entry.status = entry.sets.isEmpty ? .notStarted : .inProgress
+        }
+    }
+
+    func markExerciseComplete(sessionId: UUID, entryId: UUID) {
+        mutateEntry(sessionId: sessionId, entryId: entryId) { entry in
+            entry.status = .completed
+        }
+        Haptics.success()
+    }
+
+    func skipExercise(sessionId: UUID, entryId: UUID) {
+        mutateEntry(sessionId: sessionId, entryId: entryId) { entry in
+            entry.status = .skipped
+        }
+        Haptics.medium()
+    }
+
+    func upsertMovement(id: UUID? = nil, name: String, category: String?, notes: String?) {
+        let now = Date()
+        if let id, let index = appData.movements.firstIndex(where: { $0.id == id }) {
+            appData.movements[index].name = name
+            appData.movements[index].category = category?.nilIfBlank
+            appData.movements[index].notes = notes?.nilIfBlank
+            appData.movements[index].updatedAt = now
+        } else {
+            appData.movements.append(Movement(id: UUID(), name: name, category: category?.nilIfBlank, notes: notes?.nilIfBlank, isArchived: false, createdAt: now, updatedAt: now))
+        }
+        touch()
+    }
+
+    func archiveMovement(_ id: UUID) {
+        guard let index = appData.movements.firstIndex(where: { $0.id == id }) else { return }
+        appData.movements[index].isArchived = true
+        appData.movements[index].updatedAt = .now
+        touch()
+    }
+
+    func upsertVariation(id: UUID? = nil, movementId: UUID, name: String, implementType: ImplementType?) {
+        let now = Date()
+        if let id, let index = appData.variations.firstIndex(where: { $0.id == id }) {
+            appData.variations[index].movementId = movementId
+            appData.variations[index].name = name
+            appData.variations[index].implementType = implementType
+            appData.variations[index].updatedAt = now
+        } else {
+            appData.variations.append(Variation(id: UUID(), movementId: movementId, name: name, implementType: implementType, notes: nil, isArchived: false, createdAt: now, updatedAt: now))
+        }
+        touch()
+    }
+
+    func archiveVariation(_ id: UUID) {
+        guard let index = appData.variations.firstIndex(where: { $0.id == id }) else { return }
+        appData.variations[index].isArchived = true
+        appData.variations[index].updatedAt = .now
+        touch()
+    }
+
+    func upsertLocation(id: UUID? = nil, name: String, notes: String?) {
+        let now = Date()
+        if let id, let index = appData.locations.firstIndex(where: { $0.id == id }) {
+            appData.locations[index].name = name
+            appData.locations[index].notes = notes?.nilIfBlank
+            appData.locations[index].updatedAt = now
+        } else {
+            appData.locations.append(Location(id: UUID(), name: name, notes: notes?.nilIfBlank, isArchived: false, createdAt: now, updatedAt: now))
+        }
+        touch()
+    }
+
+    func archiveLocation(_ id: UUID) {
+        guard let index = appData.locations.firstIndex(where: { $0.id == id }) else { return }
+        appData.locations[index].isArchived = true
+        appData.locations[index].updatedAt = .now
+        touch()
+    }
+
+    func setCurrentRegimen(_ regimenId: UUID) {
+        for index in appData.regimens.indices {
+            appData.regimens[index].isCurrent = appData.regimens[index].id == regimenId
+        }
+        appData.currentRegimenId = regimenId
+        touch()
+    }
+
+    func createRegimen(named name: String) {
+        let now = Date()
+        let regimen = Regimen(id: UUID(), name: name, isCurrent: appData.regimens.isEmpty, days: [], notes: nil, createdAt: now, updatedAt: now)
+        appData.regimens.append(regimen)
+        if appData.currentRegimenId == nil {
+            appData.currentRegimenId = regimen.id
+        }
+        touch()
+    }
+
+    func addDay(to regimenId: UUID, name: String) {
+        guard let regimenIndex = appData.regimens.firstIndex(where: { $0.id == regimenId }) else { return }
+        let nextIndex = appData.regimens[regimenIndex].days.count
+        appData.regimens[regimenIndex].days.append(RegimenDay(id: UUID(), name: name, orderIndex: nextIndex, items: [], notes: nil))
+        appData.regimens[regimenIndex].updatedAt = .now
+        touch()
+    }
+
+    func addRegimenItem(to regimenId: UUID, dayId: UUID, movementId: UUID, defaultVariationId: UUID?) {
+        guard let regimenIndex = appData.regimens.firstIndex(where: { $0.id == regimenId }),
+              let dayIndex = appData.regimens[regimenIndex].days.firstIndex(where: { $0.id == dayId }) else { return }
+        let nextIndex = appData.regimens[regimenIndex].days[dayIndex].items.count
+        appData.regimens[regimenIndex].days[dayIndex].items.append(
+            RegimenItem(
+                id: UUID(),
+                orderIndex: nextIndex,
+                movementId: movementId,
+                defaultVariationId: defaultVariationId,
+                plannedSetCount: 3,
+                plannedRepRange: RepRange(min: 8, max: 12),
+                notes: nil
+            )
+        )
+        appData.regimens[regimenIndex].updatedAt = .now
+        touch()
+    }
+
+    func exportDocument() -> BackupDocument {
+        BackupDocument(appData: appData)
+    }
+
+    func exportFilename() -> String {
+        persistence.exportFilename()
+    }
+
+    func importBackup(from url: URL) {
+        do {
+            let imported = try persistence.importData(from: url)
+            appData = imported
+            save()
+            Haptics.success()
+        } catch {
+            errorMessage = "Import failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func mutateEntry(sessionId: UUID, entryId: UUID, mutate: (inout WorkoutExerciseEntry) -> Void) {
+        guard let sessionIndex = appData.workoutSessions.firstIndex(where: { $0.id == sessionId }),
+              let entryIndex = appData.workoutSessions[sessionIndex].exerciseEntries.firstIndex(where: { $0.id == entryId }) else { return }
+        mutate(&appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex])
+        appData.workoutSessions[sessionIndex].updatedAt = .now
+        touch()
+    }
+
+    private func workoutEntry(sessionId: UUID, entryId: UUID) -> WorkoutExerciseEntry? {
+        appData.workoutSessions.first(where: { $0.id == sessionId })?.exerciseEntries.first(where: { $0.id == entryId })
+    }
+
+    private func touch() {
+        appData.updatedAt = .now
+        save()
+    }
+
+    private func save() {
+        do {
+            try persistence.save(appData)
+        } catch {
+            errorMessage = "Failed to save data: \(error.localizedDescription)"
+        }
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        trimmed.isEmpty ? nil : trimmed
+    }
+
+    var trimmed: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
