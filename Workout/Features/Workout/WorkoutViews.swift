@@ -141,6 +141,7 @@ struct WorkoutEntryCard: View {
 }
 
 struct ExerciseLoggingView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AppStore
 
     let sessionID: UUID
@@ -244,11 +245,13 @@ struct ExerciseLoggingView: View {
                     HStack(spacing: 12) {
                         Button("Complete") {
                             store.markExerciseComplete(sessionId: session.id, entryId: entry.id)
+                            dismiss()
                         }
                         .buttonStyle(PrimaryButtonStyle())
 
                         Button("Skip") {
                             store.skipExercise(sessionId: session.id, entryId: entry.id)
+                            dismiss()
                         }
                         .buttonStyle(SecondaryButtonStyle())
                     }
