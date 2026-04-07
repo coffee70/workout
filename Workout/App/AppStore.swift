@@ -17,7 +17,7 @@ final class AppStore: ObservableObject {
     }
 
     var currentRegimen: Regimen? {
-        appData.regimens.first(where: { $0.id == appData.currentRegimenId }) ?? appData.regimens.first(where: \.isCurrent)
+        appData.regimens.first(where: { $0.id == appData.currentRegimenId && !$0.isArchived }) ?? appData.regimens.first { $0.isCurrent && !$0.isArchived }
     }
 
     var activeWorkoutSession: WorkoutSession? {
@@ -30,7 +30,7 @@ final class AppStore: ObservableObject {
     }
 
     var activeMovements: [Movement] {
-        appData.movements.filter { !$0.isArchived }.sorted { $0.name < $1.name }
+        appData.movements.filter { !$0.isArchived }.sorted { $0.canonicalName < $1.canonicalName }
     }
 
     var activeVariations: [Variation] {
@@ -41,12 +41,74 @@ final class AppStore: ObservableObject {
         appData.workoutSessions.sorted { $0.startedAt > $1.startedAt }
     }
 
+    var regimensByCurrentThenName: [Regimen] {
+        activeRegimens.sorted {
+            if $0.id == appData.currentRegimenId { return true }
+            if $1.id == appData.currentRegimenId { return false }
+            if $0.isCurrent != $1.isCurrent { return $0.isCurrent }
+            return $0.name < $1.name
+        }
+    }
+
+    var activeRegimens: [Regimen] {
+        appData.regimens.filter { !$0.isArchived }
+    }
+
+    var archivedRegimens: [Regimen] {
+        appData.regimens.filter(\.isArchived).sorted { $0.name < $1.name }
+    }
+
     func variations(for movementId: UUID) -> [Variation] {
         activeVariations.filter { $0.movementId == movementId }
     }
 
+    func movements(for muscleGroup: MuscleGroup) -> [Movement] {
+        activeMovements.filter { movement in
+            movement.primaryMuscleGroups.contains(muscleGroup) || movement.secondaryMuscleGroups.contains(muscleGroup)
+        }
+    }
+
+    func searchMovements(query: String, muscleGroup: MuscleGroup? = nil) -> [Movement] {
+        let baseMovements = muscleGroup.map(movements(for:)) ?? activeMovements
+        guard !query.trimmed.isEmpty else { return baseMovements }
+        return baseMovements.filter { movementMatchesSearch($0, query: query) }
+    }
+
+    func movementMatchesSearch(_ movement: Movement, query: String) -> Bool {
+        let normalizedQuery = query.normalizedSearchText
+        let compactQuery = normalizedQuery.replacingOccurrences(of: " ", with: "")
+        guard !normalizedQuery.isEmpty else { return true }
+
+        let searchableValues = [movement.canonicalName] + movement.aliases
+        return searchableValues.contains { value in
+            let normalizedValue = value.normalizedSearchText
+            let compactValue = normalizedValue.replacingOccurrences(of: " ", with: "")
+            return normalizedValue.contains(normalizedQuery) || compactValue.contains(compactQuery)
+        }
+    }
+
+    func canonicalMovement(for query: String) -> Movement? {
+        let normalizedQuery = query.normalizedSearchText
+        guard !normalizedQuery.isEmpty else { return nil }
+        return activeMovements.first { movement in
+            ([movement.canonicalName] + movement.aliases).contains { $0.normalizedSearchText == normalizedQuery }
+        } ?? searchMovements(query: query).first
+    }
+
+    func movement(for id: UUID?) -> Movement? {
+        appData.movements.first(where: { $0.id == id })
+    }
+
     func movementName(_ id: UUID?) -> String {
-        appData.movements.first(where: { $0.id == id })?.name ?? "Unknown Movement"
+        movement(for: id)?.canonicalName ?? "Unknown Movement"
+    }
+
+    func primaryMuscleGroupName(for movementId: UUID?) -> String? {
+        movement(for: movementId)?.primaryMuscleGroups.first?.displayName
+    }
+
+    func regimen(_ id: UUID?) -> Regimen? {
+        appData.regimens.first(where: { $0.id == id })
     }
 
     func variationName(_ id: UUID?) -> String {
@@ -73,7 +135,8 @@ final class AppStore: ObservableObject {
             appData = try persistence.load()
         } catch {
             appData = SeedData.make()
-            errorMessage = "Failed to load saved data. Seed data was restored."
+            errorMessage = "Failed to load saved data. Movement catalog was restored."
+            save()
         }
     }
 
@@ -226,15 +289,42 @@ final class AppStore: ObservableObject {
         Haptics.medium()
     }
 
-    func upsertMovement(id: UUID? = nil, name: String, category: String?, notes: String?) {
+    func upsertMovement(
+        id: UUID? = nil,
+        canonicalName: String,
+        aliases: [String] = [],
+        primaryMuscleGroups: [MuscleGroup],
+        secondaryMuscleGroups: [MuscleGroup] = [],
+        equipmentCategory: EquipmentCategory? = nil,
+        movementPattern: MovementPattern? = nil,
+        notes: String?
+    ) {
         let now = Date()
         if let id, let index = appData.movements.firstIndex(where: { $0.id == id }) {
-            appData.movements[index].name = name
-            appData.movements[index].category = category?.nilIfBlank
+            appData.movements[index].canonicalName = canonicalName
+            appData.movements[index].aliases = aliases
+            appData.movements[index].primaryMuscleGroups = primaryMuscleGroups
+            appData.movements[index].secondaryMuscleGroups = secondaryMuscleGroups
+            appData.movements[index].equipmentCategory = equipmentCategory
+            appData.movements[index].movementPattern = movementPattern
             appData.movements[index].notes = notes?.nilIfBlank
             appData.movements[index].updatedAt = now
         } else {
-            appData.movements.append(Movement(id: UUID(), name: name, category: category?.nilIfBlank, notes: notes?.nilIfBlank, isArchived: false, createdAt: now, updatedAt: now))
+            appData.movements.append(
+                Movement(
+                    id: UUID(),
+                    canonicalName: canonicalName,
+                    aliases: aliases,
+                    primaryMuscleGroups: primaryMuscleGroups,
+                    secondaryMuscleGroups: secondaryMuscleGroups,
+                    equipmentCategory: equipmentCategory,
+                    movementPattern: movementPattern,
+                    notes: notes?.nilIfBlank,
+                    isArchived: false,
+                    createdAt: now,
+                    updatedAt: now
+                )
+            )
         }
         touch()
     }
@@ -246,15 +336,16 @@ final class AppStore: ObservableObject {
         touch()
     }
 
-    func upsertVariation(id: UUID? = nil, movementId: UUID, name: String, implementType: ImplementType?) {
+    func upsertVariation(id: UUID? = nil, movementId: UUID, name: String, equipmentCategory: EquipmentCategory?, notes: String? = nil) {
         let now = Date()
         if let id, let index = appData.variations.firstIndex(where: { $0.id == id }) {
             appData.variations[index].movementId = movementId
             appData.variations[index].name = name
-            appData.variations[index].implementType = implementType
+            appData.variations[index].equipmentCategory = equipmentCategory
+            appData.variations[index].notes = notes?.nilIfBlank
             appData.variations[index].updatedAt = now
         } else {
-            appData.variations.append(Variation(id: UUID(), movementId: movementId, name: name, implementType: implementType, notes: nil, isArchived: false, createdAt: now, updatedAt: now))
+            appData.variations.append(Variation(id: UUID(), movementId: movementId, name: name, equipmentCategory: equipmentCategory, notes: notes?.nilIfBlank, isArchived: false, createdAt: now, updatedAt: now))
         }
         touch()
     }
@@ -295,11 +386,45 @@ final class AppStore: ObservableObject {
 
     func createRegimen(named name: String) {
         let now = Date()
-        let regimen = Regimen(id: UUID(), name: name, isCurrent: appData.regimens.isEmpty, days: [], notes: nil, createdAt: now, updatedAt: now)
-        appData.regimens.append(regimen)
-        if appData.currentRegimenId == nil {
-            appData.currentRegimenId = regimen.id
+        for index in appData.regimens.indices {
+            appData.regimens[index].isCurrent = false
         }
+        let regimen = Regimen(id: UUID(), name: name, isCurrent: true, days: [], notes: nil, isArchived: false, createdAt: now, updatedAt: now)
+        appData.regimens.append(regimen)
+        appData.currentRegimenId = regimen.id
+        touch()
+    }
+
+    func updateRegimen(id: UUID, name: String, notes: String?) {
+        guard let index = appData.regimens.firstIndex(where: { $0.id == id }) else { return }
+        appData.regimens[index].name = name
+        appData.regimens[index].notes = notes?.nilIfBlank
+        appData.regimens[index].updatedAt = .now
+        touch()
+    }
+
+    func updateRegimenDay(regimenId: UUID, dayId: UUID, name: String, notes: String?) {
+        guard let regimenIndex = appData.regimens.firstIndex(where: { $0.id == regimenId }),
+              let dayIndex = appData.regimens[regimenIndex].days.firstIndex(where: { $0.id == dayId }) else { return }
+        appData.regimens[regimenIndex].days[dayIndex].name = name
+        appData.regimens[regimenIndex].days[dayIndex].notes = notes?.nilIfBlank
+        appData.regimens[regimenIndex].updatedAt = .now
+        touch()
+    }
+
+    func archiveRegimen(_ id: UUID) {
+        guard let index = appData.regimens.firstIndex(where: { $0.id == id }),
+              appData.regimens[index].id != currentRegimen?.id else { return }
+        appData.regimens[index].isArchived = true
+        appData.regimens[index].isCurrent = false
+        appData.regimens[index].updatedAt = .now
+        touch()
+    }
+
+    func restoreRegimen(_ id: UUID) {
+        guard let index = appData.regimens.firstIndex(where: { $0.id == id }) else { return }
+        appData.regimens[index].isArchived = false
+        appData.regimens[index].updatedAt = .now
         touch()
     }
 
@@ -382,5 +507,12 @@ private extension String {
 
     var trimmed: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var normalizedSearchText: String {
+        folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }

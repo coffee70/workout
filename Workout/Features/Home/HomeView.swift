@@ -7,7 +7,7 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                SectionTitle(eyebrow: "Workout", title: "Train the current block")
+                SectionTitle(eyebrow: "Workout", title: "Train")
 
                 if let active = store.activeWorkoutSession {
                     SurfaceCard {
@@ -57,13 +57,7 @@ struct HomeView: View {
                                             .foregroundStyle(AppTheme.textMuted)
                                     }
                                     Spacer()
-                                    Image(systemName: "arrow.right.circle.fill")
-                                        .font(.title2)
-                                        .foregroundStyle(AppTheme.accent)
                                 }
-                            }
-                            .onTapGesture {
-                                showStartWorkout = true
                             }
                         }
                     }
@@ -147,6 +141,8 @@ struct StartWorkoutView: View {
                             }
                         }
                     }
+                } else {
+                    ContentUnavailableView("No Regimen", systemImage: "list.bullet.clipboard", description: Text("Create a regimen in Library before starting a workout."))
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -154,24 +150,28 @@ struct StartWorkoutView: View {
                         .font(.headline)
                         .foregroundStyle(AppTheme.textSecondary)
 
-                    TabView(selection: $selectedLocationIndex) {
-                        ForEach(Array(store.activeLocations.enumerated()), id: \.offset) { index, location in
-                            SurfaceCard {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Text(location.name)
-                                        .font(.largeTitle.bold())
-                                        .foregroundStyle(AppTheme.textPrimary)
-                                    Text(location.notes ?? "Swipe between gyms to set the session context.")
-                                        .foregroundStyle(AppTheme.textSecondary)
+                    if store.activeLocations.isEmpty {
+                        ContentUnavailableView("No Locations", systemImage: "mappin.and.ellipse", description: Text("Add a location in Library before starting a workout."))
+                    } else {
+                        TabView(selection: $selectedLocationIndex) {
+                            ForEach(Array(store.activeLocations.enumerated()), id: \.offset) { index, location in
+                                SurfaceCard {
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        Text(location.name)
+                                            .font(.largeTitle.bold())
+                                            .foregroundStyle(AppTheme.textPrimary)
+                                        Text(location.notes ?? "Swipe between gyms to set the session context.")
+                                            .foregroundStyle(AppTheme.textSecondary)
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
                                 }
-                                .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
+                                .tag(index)
+                                .padding(.horizontal, 4)
                             }
-                            .tag(index)
-                            .padding(.horizontal, 4)
                         }
+                        .frame(height: 220)
+                        .tabViewStyle(.page(indexDisplayMode: .always))
                     }
-                    .frame(height: 220)
-                    .tabViewStyle(.page(indexDisplayMode: .always))
                 }
 
                 Button("Start Workout") {

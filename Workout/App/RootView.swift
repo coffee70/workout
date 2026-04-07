@@ -9,7 +9,7 @@ struct RootView: View {
                 HomeView()
             }
             .tabItem {
-                Label("Home", systemImage: "house.fill")
+                Label("Train", systemImage: "figure.strengthtraining.traditional")
             }
 
             NavigationStack {

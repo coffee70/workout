@@ -15,7 +15,7 @@ struct AppData: Codable {
     var createdAt: Date
     var updatedAt: Date
 
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 5
 
     static func empty(now: Date = .now) -> AppData {
         AppData(
@@ -36,8 +36,12 @@ struct AppData: Codable {
 
 struct Movement: Codable, Identifiable, Hashable {
     var id: UUID
-    var name: String
-    var category: String?
+    var canonicalName: String
+    var aliases: [String]
+    var primaryMuscleGroups: [MuscleGroup]
+    var secondaryMuscleGroups: [MuscleGroup]
+    var equipmentCategory: EquipmentCategory?
+    var movementPattern: MovementPattern?
     var notes: String?
     var isArchived: Bool
     var createdAt: Date
@@ -48,14 +52,62 @@ struct Variation: Codable, Identifiable, Hashable {
     var id: UUID
     var movementId: UUID
     var name: String
-    var implementType: ImplementType?
+    var equipmentCategory: EquipmentCategory?
     var notes: String?
     var isArchived: Bool
     var createdAt: Date
     var updatedAt: Date
 }
 
-enum ImplementType: String, Codable, CaseIterable, Hashable {
+enum MuscleGroup: String, Codable, CaseIterable, Hashable {
+    case quadriceps
+    case hamstrings
+    case glutes
+    case calves
+    case adductors
+    case abductors
+    case chest
+    case upperChest
+    case frontDelts
+    case sideDelts
+    case rearDelts
+    case triceps
+    case lats
+    case upperBack
+    case midBack
+    case traps
+    case biceps
+    case forearms
+    case spinalErectors
+    case abs
+
+    var displayName: String {
+        switch self {
+        case .quadriceps: return "Quadriceps"
+        case .hamstrings: return "Hamstrings"
+        case .glutes: return "Glutes"
+        case .calves: return "Calves"
+        case .adductors: return "Adductors"
+        case .abductors: return "Abductors"
+        case .chest: return "Chest"
+        case .upperChest: return "Upper Chest"
+        case .frontDelts: return "Front Delts"
+        case .sideDelts: return "Side Delts"
+        case .rearDelts: return "Rear Delts"
+        case .triceps: return "Triceps"
+        case .lats: return "Lats"
+        case .upperBack: return "Upper Back"
+        case .midBack: return "Mid Back"
+        case .traps: return "Traps"
+        case .biceps: return "Biceps"
+        case .forearms: return "Forearms"
+        case .spinalErectors: return "Spinal Erectors"
+        case .abs: return "Abs"
+        }
+    }
+}
+
+enum EquipmentCategory: String, Codable, CaseIterable, Hashable {
     case barbell
     case dumbbell
     case cable
@@ -75,6 +127,40 @@ enum ImplementType: String, Codable, CaseIterable, Hashable {
     }
 }
 
+enum MovementPattern: String, Codable, CaseIterable, Hashable {
+    case squat
+    case hinge
+    case horizontalPress
+    case verticalPress
+    case fly
+    case horizontalRow
+    case verticalPull
+    case curl
+    case extensionMovement = "extension"
+    case raise
+    case calfRaise
+    case adduction
+    case abduction
+
+    var displayName: String {
+        switch self {
+        case .squat: return "Squat"
+        case .hinge: return "Hinge"
+        case .horizontalPress: return "Horizontal Press"
+        case .verticalPress: return "Vertical Press"
+        case .fly: return "Fly"
+        case .horizontalRow: return "Horizontal Row"
+        case .verticalPull: return "Vertical Pull"
+        case .curl: return "Curl"
+        case .extensionMovement: return "Extension"
+        case .raise: return "Raise"
+        case .calfRaise: return "Calf Raise"
+        case .adduction: return "Adduction"
+        case .abduction: return "Abduction"
+        }
+    }
+}
+
 struct Location: Codable, Identifiable, Hashable {
     var id: UUID
     var name: String
@@ -90,6 +176,7 @@ struct Regimen: Codable, Identifiable, Hashable {
     var isCurrent: Bool
     var days: [RegimenDay]
     var notes: String?
+    var isArchived: Bool
     var createdAt: Date
     var updatedAt: Date
 }
@@ -244,4 +331,3 @@ enum HistoryScope: String, CaseIterable, Identifiable {
         }
     }
 }
-

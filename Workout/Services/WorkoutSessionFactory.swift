@@ -10,11 +10,11 @@ struct WorkoutSessionFactory {
                 orderIndex: item.orderIndex,
                 sourceRegimenItemId: item.id,
                 plannedMovementId: movement?.id,
-                plannedMovementNameSnapshot: movement?.name,
+                plannedMovementNameSnapshot: movement?.canonicalName,
                 plannedVariationId: item.defaultVariationId,
                 plannedVariationNameSnapshot: variation?.name,
                 performedMovementId: movement?.id ?? item.movementId,
-                performedMovementNameSnapshot: movement?.name ?? "Unknown Movement",
+                performedMovementNameSnapshot: movement?.canonicalName ?? "Unknown Movement",
                 performedVariationId: variation?.id ?? UUID(),
                 performedVariationNameSnapshot: variation?.name ?? "Select Variation",
                 status: .notStarted,
@@ -44,4 +44,3 @@ struct WorkoutSessionFactory {
         )
     }
 }
-
