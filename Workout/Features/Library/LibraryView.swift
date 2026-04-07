@@ -485,10 +485,7 @@ struct RegimenEditorView: View {
         .sheet(item: $draft) { currentDraft in
             NavigationStack {
                 RegimenEditView(
-                    draft: Binding(
-                        get: { draft ?? currentDraft },
-                        set: { draft = $0 }
-                    ),
+                    draft: currentDraft,
                     onCancel: { draft = nil },
                     onSave: { savedDraft in
                         store.createRegimen(named: savedDraft.name)
@@ -650,10 +647,7 @@ private struct RegimenDetailView: View {
         .sheet(item: $regimenDraft) { currentDraft in
             NavigationStack {
                 RegimenEditView(
-                    draft: Binding(
-                        get: { regimenDraft ?? currentDraft },
-                        set: { regimenDraft = $0 }
-                    ),
+                    draft: currentDraft,
                     onCancel: { regimenDraft = nil },
                     onSave: { savedDraft in
                         if let regimenId = savedDraft.regimenId {
@@ -1305,9 +1299,15 @@ private struct LocationEditView: View {
 }
 
 private struct RegimenEditView: View {
-    @Binding var draft: RegimenDraft
+    @State private var draft: RegimenDraft
     let onCancel: () -> Void
     let onSave: (RegimenDraft) -> Void
+
+    init(draft: RegimenDraft, onCancel: @escaping () -> Void, onSave: @escaping (RegimenDraft) -> Void) {
+        _draft = State(initialValue: draft)
+        self.onCancel = onCancel
+        self.onSave = onSave
+    }
 
     var body: some View {
         Form {
