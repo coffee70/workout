@@ -83,6 +83,8 @@ private struct LibraryLandingCard: View {
 
 struct MovementListView: View {
     @EnvironmentObject private var store: AppStore
+    @State private var searchText = ""
+    @FocusState private var searchFocused: Bool
 
     private let groupSections = [
         MuscleGroupSection(title: "Upper Body", groups: [.chest, .upperChest, .lats, .upperBack, .midBack, .traps, .frontDelts, .sideDelts, .rearDelts]),
@@ -91,32 +93,71 @@ struct MovementListView: View {
         MuscleGroupSection(title: "Other", groups: [.abs])
     ]
 
+    private var isSearching: Bool {
+        !searchText.trimmed.isEmpty
+    }
+
+    private var searchResults: [Movement] {
+        store.searchMovements(query: searchText)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                ForEach(groupSections) { section in
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(section.title)
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(AppTheme.textMuted)
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 10)], spacing: 10) {
-                            ForEach(section.groups, id: \.self) { group in
-                                NavigationLink {
-                                    MovementLibraryGroupView(group: group)
-                                } label: {
-                                    MuscleGroupTile(group: group, count: store.movements(for: group).count, isSelected: false)
+                if isSearching {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Movements")
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.textPrimary)
+
+                        ForEach(searchResults) { movement in
+                            NavigationLink {
+                                MovementDetailView(movementId: movement.id)
+                            } label: {
+                                MovementSelectionCard(movement: movement, isSelected: false)
+                            }
+                            .buttonStyle(.plain)
+                            .simultaneousGesture(TapGesture().onEnded {
+                                searchFocused = false
+                            })
+                            .padding(.bottom, 6)
+                        }
+
+                        if searchResults.isEmpty {
+                            Text("No matching movements.")
+                                .foregroundStyle(AppTheme.textMuted)
+                        }
+                    }
+                } else {
+                    ForEach(groupSections) { section in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(section.title)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(AppTheme.textMuted)
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 10)], spacing: 10) {
+                                ForEach(section.groups, id: \.self) { group in
+                                    NavigationLink {
+                                        MovementLibraryGroupView(group: group)
+                                    } label: {
+                                        MuscleGroupTile(group: group, count: store.movements(for: group).count, isSelected: false)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
                     }
                 }
             }
             .padding()
+            .padding(.bottom, 78)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(AppTheme.background.ignoresSafeArea())
         .navigationTitle("Movements")
         .navigationBarTitleDisplayMode(.large)
+        .safeAreaInset(edge: .bottom) {
+            MovementFloatingSearchBar(searchText: $searchText, searchFocused: _searchFocused)
+        }
     }
 }
 
@@ -248,7 +289,7 @@ private struct MovementDetailView: View {
                             movementToRemove = movement
                         }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Image(systemName: "ellipsis")
                     }
                     .foregroundStyle(AppTheme.accent)
                 }
@@ -606,87 +647,45 @@ private struct RegimenDetailView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
-                        ForEach(regimen.days.sorted(by: { $0.orderIndex < $1.orderIndex })) { day in
-                            SurfaceCard {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    let isExpanded = expandedDayIds.contains(day.id)
+                        Text("\(regimen.days.count) days")
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.textSecondary)
 
-                                    Button {
-                                        if isExpanded {
+                        if !regimen.isArchived {
+                            Button {
+                                showNewDay = true
+                            } label: {
+                                Label("Add Day", systemImage: "plus")
+                            }
+                            .buttonStyle(PrimaryButtonStyle())
+                            .accessibilityLabel("Add Day")
+                            .accessibilityHint("Creates another workout day in this regimen")
+                        }
+
+                        ForEach(regimen.days.sorted(by: { $0.orderIndex < $1.orderIndex })) { day in
+                            RegimenDayCard(
+                                day: day,
+                                isExpanded: expandedDayIds.contains(day.id),
+                                onToggle: {
+                                    let animation = Animation.snappy(duration: 0.28, extraBounce: 0.03)
+                                    withAnimation(animation) {
+                                        if expandedDayIds.contains(day.id) {
                                             expandedDayIds.remove(day.id)
                                         } else {
                                             expandedDayIds.insert(day.id)
                                         }
-                                    } label: {
-                                        HStack(spacing: 12) {
-                                            VStack(alignment: .leading, spacing: 6) {
-                                                Text(day.name)
-                                                    .font(.headline)
-                                                    .foregroundStyle(AppTheme.textPrimary)
-                                                Text("\(day.items.count) movements")
-                                                    .font(.subheadline)
-                                                    .foregroundStyle(AppTheme.textSecondary)
-                                            }
-                                            Spacer(minLength: 8)
-                                            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                                                .font(.footnote.weight(.bold))
-                                                .foregroundStyle(AppTheme.textMuted)
-                                                .frame(width: 32, height: 32)
-                                        }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
                                     }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel("\(day.name), \(day.items.count) movements")
-                                    .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-
-                                    if isExpanded {
-                                        ForEach(day.items.sorted(by: { $0.orderIndex < $1.orderIndex })) { item in
-                                            VStack(alignment: .leading, spacing: 6) {
-                                                HStack {
-                                                    Text(store.movementName(item.movementId))
-                                                        .foregroundStyle(AppTheme.textPrimary)
-                                                    Spacer()
-                                                    if let muscleGroup = store.primaryMuscleGroupName(for: item.movementId) {
-                                                        StatusPill(title: muscleGroup, color: AppTheme.accent)
-                                                    }
-                                                }
-                                                Text(store.variationName(item.defaultVariationId))
-                                                    .foregroundStyle(AppTheme.textSecondary)
-                                                Text(item.targetSummary)
-                                                    .font(.subheadline.weight(.semibold))
-                                                    .foregroundStyle(AppTheme.accentSecondary)
-                                            }
-                                            .padding(.vertical, 4)
-                                            .contentShape(Rectangle())
-                                            .onTapGesture {
-                                                itemDraft = RegimenItemDraft(regimenId: regimen.id, dayId: day.id, item: item)
-                                            }
-                                            .contextMenu {
-                                                Button("Edit Target") {
-                                                    itemDraft = RegimenItemDraft(regimenId: regimen.id, dayId: day.id, item: item)
-                                                }
-                                            }
-                                        }
-
-                                        HStack(spacing: 10) {
-                                            Button {
-                                                dayDraft = RegimenDayDraft(day: day, regimenId: regimen.id)
-                                            } label: {
-                                                Label("Edit", systemImage: "pencil")
-                                            }
-                                            .buttonStyle(CompactSecondaryButtonStyle())
-
-                                            Button {
-                                                addItemTarget = AddRegimenItemTarget(regimenId: regimen.id, dayId: day.id)
-                                            } label: {
-                                                Label("Add", systemImage: "plus")
-                                            }
-                                            .buttonStyle(CompactSecondaryButtonStyle())
-                                        }
-                                    }
+                                },
+                                onEditDay: {
+                                    dayDraft = RegimenDayDraft(day: day, regimenId: regimen.id)
+                                },
+                                onAddItem: {
+                                    addItemTarget = AddRegimenItemTarget(regimenId: regimen.id, dayId: day.id)
+                                },
+                                onEditItem: { item in
+                                    itemDraft = RegimenItemDraft(regimenId: regimen.id, dayId: day.id, item: item)
                                 }
-                            }
+                            )
                         }
                     }
                 } else {
@@ -697,27 +696,6 @@ private struct RegimenDetailView: View {
         }
         .background(AppTheme.background.ignoresSafeArea())
         .navigationTitle(regimen?.name ?? "Regimen")
-        .safeAreaInset(edge: .bottom) {
-            if let regimen, !regimen.isArchived {
-                HStack {
-                    Spacer()
-                    Button {
-                        showNewDay = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(.black)
-                            .frame(width: 56, height: 56)
-                            .background(AppTheme.accent, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Add Day")
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 8)
-                .background(AppTheme.background.opacity(0.95))
-            }
-        }
         .sheet(item: $regimenDraft) { currentDraft in
             NavigationStack {
                 RegimenEditView(
@@ -820,6 +798,118 @@ private struct RegimenDetailView: View {
     }
 }
 
+private struct RegimenDayCard: View {
+    let day: RegimenDay
+    let isExpanded: Bool
+    let onToggle: () -> Void
+    let onEditDay: () -> Void
+    let onAddItem: () -> Void
+    let onEditItem: (RegimenItem) -> Void
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Button(action: onToggle) {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(day.name)
+                                .font(.headline)
+                                .foregroundStyle(AppTheme.textPrimary)
+                            Text("\(day.items.count) movements")
+                                .font(.subheadline)
+                                .foregroundStyle(AppTheme.textSecondary)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.up")
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(AppTheme.textMuted)
+                            .frame(width: 32, height: 32)
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(day.name), \(day.items.count) movements")
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+                if isExpanded {
+                    RegimenDayExpandedContent(
+                        day: day,
+                        onEditDay: onEditDay,
+                        onAddItem: onAddItem,
+                        onEditItem: onEditItem
+                    )
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),
+                        removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
+                    ))
+                }
+            }
+        }
+    }
+}
+
+private struct RegimenDayExpandedContent: View {
+    let day: RegimenDay
+    let onEditDay: () -> Void
+    let onAddItem: () -> Void
+    let onEditItem: (RegimenItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(day.items.sorted(by: { $0.orderIndex < $1.orderIndex })) { item in
+                RegimenDayItemRow(item: item) {
+                    onEditItem(item)
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button(action: onEditDay) {
+                    Label("Edit", systemImage: "pencil")
+                }
+                .buttonStyle(CompactSecondaryButtonStyle())
+
+                Button(action: onAddItem) {
+                    Label("Add", systemImage: "plus")
+                }
+                .buttonStyle(CompactSecondaryButtonStyle())
+            }
+        }
+    }
+}
+
+private struct RegimenDayItemRow: View {
+    @EnvironmentObject private var store: AppStore
+
+    let item: RegimenItem
+    let onEdit: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(store.movementName(item.movementId))
+                    .foregroundStyle(AppTheme.textPrimary)
+                Spacer()
+                if let muscleGroup = store.primaryMuscleGroupName(for: item.movementId) {
+                    StatusPill(title: muscleGroup, color: AppTheme.accent)
+                }
+            }
+            Text(store.variationName(item.defaultVariationId))
+                .foregroundStyle(AppTheme.textSecondary)
+            Text(item.targetSummary)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AppTheme.accentSecondary)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onEdit)
+        .contextMenu {
+            Button("Edit Target", action: onEdit)
+        }
+    }
+}
+
 private struct AddRegimenItemTarget: Identifiable {
     let regimenId: UUID
     let dayId: UUID
@@ -849,52 +939,6 @@ private struct AddRegimenItemView: View {
 
     private var searchResults: [Movement] {
         store.searchMovements(query: searchText)
-    }
-
-    private var floatingSearchBar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(AppTheme.textMuted)
-
-                TextField("Search exercises or aliases", text: $searchText)
-                    .focused($searchFocused)
-                    .textInputAutocapitalization(.words)
-                    .submitLabel(.search)
-                    .onSubmit {
-                        searchFocused = false
-                    }
-                    .foregroundStyle(AppTheme.textPrimary)
-            }
-            .padding(.horizontal, 14)
-            .frame(minHeight: 52)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(AppTheme.elevatedSurface)
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .strokeBorder(searchFocused ? AppTheme.accent.opacity(0.8) : Color.white.opacity(0.06), lineWidth: 1)
-                    )
-            )
-
-            if searchFocused {
-                Button {
-                    searchFocused = false
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(AppTheme.textPrimary)
-                        .frame(width: 52, height: 52)
-                        .background(AppTheme.elevatedSurface, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Dismiss keyboard")
-                .transition(.scale.combined(with: .opacity))
-            }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
-        .animation(.snappy, value: searchFocused)
     }
 
     var body: some View {
@@ -972,6 +1016,7 @@ private struct AddRegimenItemView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
             .padding(.bottom, 78)
         }
@@ -980,8 +1025,59 @@ private struct AddRegimenItemView: View {
         .navigationTitle("Add Movement")
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
-            floatingSearchBar
+            MovementFloatingSearchBar(searchText: $searchText, searchFocused: _searchFocused)
         }
+    }
+}
+
+private struct MovementFloatingSearchBar: View {
+    @Binding var searchText: String
+    @FocusState var searchFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(AppTheme.textMuted)
+
+                TextField("Search exercises or aliases", text: $searchText)
+                    .focused($searchFocused)
+                    .textInputAutocapitalization(.words)
+                    .submitLabel(.search)
+                    .onSubmit {
+                        searchFocused = false
+                    }
+                    .foregroundStyle(AppTheme.textPrimary)
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 52)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(AppTheme.elevatedSurface)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(searchFocused ? AppTheme.accent.opacity(0.8) : Color.white.opacity(0.06), lineWidth: 1)
+                    )
+            )
+
+            if searchFocused {
+                Button {
+                    searchFocused = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(AppTheme.textPrimary)
+                        .frame(width: 52, height: 52)
+                        .background(AppTheme.elevatedSurface, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss keyboard")
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .animation(.snappy, value: searchFocused)
     }
 }
 
@@ -1426,12 +1522,17 @@ private struct MovementDraft: Identifiable {
     let id = UUID()
     var movementId: UUID?
     var name = ""
-    var aliases = ""
+    var aliases: [MovementAliasDraft] = []
     var primaryMuscleGroup: MuscleGroup = .chest
     var notes = ""
 
     var aliasList: [String] {
-        aliases.split(separator: ",").map { String($0).trimmed }.filter { !$0.isEmpty }
+        var seen = Set<String>()
+        return aliases
+            .map(\.value)
+            .map(\.trimmed)
+            .filter { !$0.isEmpty }
+            .filter { seen.insert($0.lowercased()).inserted }
     }
 
     init(primaryMuscleGroup: MuscleGroup = .chest) {
@@ -1441,9 +1542,19 @@ private struct MovementDraft: Identifiable {
     init(movement: Movement) {
         movementId = movement.id
         name = movement.canonicalName
-        aliases = movement.aliases.joined(separator: ", ")
+        aliases = movement.aliases.map { MovementAliasDraft(value: $0) }
         primaryMuscleGroup = movement.primaryMuscleGroups.first ?? .chest
         notes = movement.notes ?? ""
+    }
+}
+
+private struct MovementAliasDraft: Identifiable, Hashable {
+    let id: UUID
+    var value: String
+
+    init(id: UUID = UUID(), value: String = "") {
+        self.id = id
+        self.value = value
     }
 }
 
@@ -1546,6 +1657,7 @@ private struct RegimenItemDraft: Identifiable {
 
 private struct MovementEditView: View {
     @State private var draft: MovementDraft
+    @FocusState private var focusedAliasID: UUID?
     let onCancel: () -> Void
     let onSave: (MovementDraft) -> Void
 
@@ -1558,13 +1670,43 @@ private struct MovementEditView: View {
     var body: some View {
         Form {
             TextField("Canonical name", text: $draft.name)
-            TextField("Aliases, comma separated", text: $draft.aliases)
             Picker("Primary muscle", selection: $draft.primaryMuscleGroup) {
                 ForEach(MuscleGroup.allCases, id: \.self) { group in
                     Text(group.displayName).tag(group)
                 }
             }
             TextField("Notes", text: $draft.notes, axis: .vertical)
+            Section("Aliases") {
+                if !draft.aliases.isEmpty {
+                    ForEach($draft.aliases) { $alias in
+                        TextField("Alias", text: $alias.value)
+                            .submitLabel(.done)
+                            .focused($focusedAliasID, equals: alias.id)
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    removeAlias(alias.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .tint(AppTheme.danger)
+                            }
+                    }
+                }
+
+                Button(action: addAliasRow) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus")
+                        Text("Add Alias")
+                        Spacer()
+                    }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background.ignoresSafeArea())
@@ -1575,11 +1717,27 @@ private struct MovementEditView: View {
                     .foregroundStyle(AppTheme.textSecondary)
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Save") { onSave(draft) }
+                Button("Save") { onSave(sanitizedDraft) }
                     .disabled(draft.name.trimmed.isEmpty)
                     .foregroundStyle(AppTheme.accent)
             }
         }
+    }
+
+    private var sanitizedDraft: MovementDraft {
+        var updatedDraft = draft
+        updatedDraft.aliases = updatedDraft.aliasList.map { MovementAliasDraft(value: $0) }
+        return updatedDraft
+    }
+
+    private func addAliasRow() {
+        let alias = MovementAliasDraft()
+        draft.aliases.append(alias)
+        focusedAliasID = alias.id
+    }
+
+    private func removeAlias(_ aliasID: UUID) {
+        draft.aliases.removeAll { $0.id == aliasID }
     }
 }
 

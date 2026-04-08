@@ -9,21 +9,39 @@ struct HistoryView: View {
                 NavigationLink {
                     HistoryDetailView(sessionID: session.id)
                 } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(session.regimenDayNameSnapshot ?? "Workout")
-                            .font(.headline)
-                        Text(session.locationNameSnapshot)
-                            .foregroundStyle(.secondary)
-                        Text(session.startedAt.formatted(date: .abbreviated, time: .shortened))
-                            .foregroundStyle(.secondary)
-                    }
+                    HistorySessionRow(session: session)
                 }
                 .listRowBackground(AppTheme.surface)
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            store.deleteWorkoutSession(session.id)
+                        }
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .tint(AppTheme.danger)
+                }
             }
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background.ignoresSafeArea())
         .navigationTitle("History")
+    }
+}
+
+private struct HistorySessionRow: View {
+    let session: WorkoutSession
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(session.regimenDayNameSnapshot ?? "Workout")
+                .font(.headline)
+            Text(session.locationNameSnapshot)
+                .foregroundStyle(.secondary)
+            Text(session.startedAt.formatted(date: .abbreviated, time: .shortened))
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -74,4 +92,3 @@ private struct HistoryDetailView: View {
         .navigationTitle("Session")
     }
 }
-

@@ -1,6 +1,6 @@
 import Foundation
 
-struct AppData: Codable {
+nonisolated struct AppData: Codable {
     var schemaVersion: Int
     var currentRegimenId: UUID?
     var activeWorkoutSessionId: UUID?
@@ -34,7 +34,7 @@ struct AppData: Codable {
     }
 }
 
-struct Movement: Codable, Identifiable, Hashable {
+nonisolated struct Movement: Codable, Identifiable, Hashable {
     var id: UUID
     var canonicalName: String
     var aliases: [String]
@@ -47,7 +47,7 @@ struct Movement: Codable, Identifiable, Hashable {
     var updatedAt: Date
 }
 
-struct Variation: Codable, Identifiable, Hashable {
+nonisolated struct Variation: Codable, Identifiable, Hashable {
     var id: UUID
     var movementId: UUID
     var name: String
@@ -58,7 +58,7 @@ struct Variation: Codable, Identifiable, Hashable {
     var updatedAt: Date
 }
 
-enum MuscleGroup: String, Codable, CaseIterable, Hashable {
+nonisolated enum MuscleGroup: String, Codable, CaseIterable, Hashable {
     case quadriceps
     case hamstrings
     case glutes
@@ -106,7 +106,7 @@ enum MuscleGroup: String, Codable, CaseIterable, Hashable {
     }
 }
 
-enum EquipmentCategory: String, Codable, CaseIterable, Hashable {
+nonisolated enum EquipmentCategory: String, Codable, CaseIterable, Hashable {
     case barbell
     case dumbbell
     case cable
@@ -126,7 +126,7 @@ enum EquipmentCategory: String, Codable, CaseIterable, Hashable {
     }
 }
 
-enum MovementPattern: String, Codable, CaseIterable, Hashable {
+nonisolated enum MovementPattern: String, Codable, CaseIterable, Hashable {
     case squat
     case hinge
     case horizontalPress
@@ -160,7 +160,7 @@ enum MovementPattern: String, Codable, CaseIterable, Hashable {
     }
 }
 
-struct Location: Codable, Identifiable, Hashable {
+nonisolated struct Location: Codable, Identifiable, Hashable {
     var id: UUID
     var name: String
     var notes: String?
@@ -169,7 +169,7 @@ struct Location: Codable, Identifiable, Hashable {
     var updatedAt: Date
 }
 
-struct Regimen: Codable, Identifiable, Hashable {
+nonisolated struct Regimen: Codable, Identifiable, Hashable {
     var id: UUID
     var name: String
     var isCurrent: Bool
@@ -180,7 +180,7 @@ struct Regimen: Codable, Identifiable, Hashable {
     var updatedAt: Date
 }
 
-struct RegimenDay: Codable, Identifiable, Hashable {
+nonisolated struct RegimenDay: Codable, Identifiable, Hashable {
     var id: UUID
     var name: String
     var orderIndex: Int
@@ -188,7 +188,7 @@ struct RegimenDay: Codable, Identifiable, Hashable {
     var notes: String?
 }
 
-struct RegimenItem: Codable, Identifiable, Hashable {
+nonisolated struct RegimenItem: Codable, Identifiable, Hashable {
     var id: UUID
     var orderIndex: Int
     var movementId: UUID
@@ -198,7 +198,7 @@ struct RegimenItem: Codable, Identifiable, Hashable {
     var notes: String?
 }
 
-struct RepRange: Codable, Hashable {
+nonisolated struct RepRange: Codable, Hashable {
     var min: Int
     var max: Int
 
@@ -207,7 +207,7 @@ struct RepRange: Codable, Hashable {
     }
 }
 
-struct WorkoutSession: Codable, Identifiable, Hashable {
+nonisolated struct WorkoutSession: Codable, Identifiable, Hashable {
     var id: UUID
     var regimenId: UUID?
     var regimenNameSnapshot: String?
@@ -225,13 +225,13 @@ struct WorkoutSession: Codable, Identifiable, Hashable {
     var updatedAt: Date
 }
 
-enum WorkoutSessionStatus: String, Codable, Hashable {
+nonisolated enum WorkoutSessionStatus: String, Codable, Hashable {
     case active
     case completed
     case abandoned
 }
 
-struct WorkoutExerciseEntry: Codable, Identifiable, Hashable {
+nonisolated struct WorkoutExerciseEntry: Codable, Identifiable, Hashable {
     var id: UUID
     var orderIndex: Int
     var sourceRegimenItemId: UUID?
@@ -255,14 +255,23 @@ struct WorkoutExerciseEntry: Codable, Identifiable, Hashable {
     var notes: String?
 }
 
-enum WorkoutExerciseStatus: String, Codable, Hashable {
+nonisolated enum WorkoutExerciseStatus: String, Codable, Hashable {
     case notStarted
     case inProgress
     case completed
     case skipped
+
+    var displayName: String {
+        switch self {
+        case .notStarted: return "Not Started"
+        case .inProgress: return "In Progress"
+        case .completed: return "Completed"
+        case .skipped: return "Skipped"
+        }
+    }
 }
 
-struct SetEntry: Codable, Identifiable, Hashable {
+nonisolated struct SetEntry: Codable, Identifiable, Hashable {
     var id: UUID
     var setNumber: Int
     var reps: Int
@@ -275,7 +284,7 @@ struct SetEntry: Codable, Identifiable, Hashable {
     var updatedAt: Date
 }
 
-enum WeightUnit: String, Codable, CaseIterable, Hashable {
+nonisolated enum WeightUnit: String, Codable, CaseIterable, Hashable {
     case pounds
     case kilograms
     case machineUnits
@@ -289,7 +298,7 @@ enum WeightUnit: String, Codable, CaseIterable, Hashable {
     }
 }
 
-struct HistorySnapshot: Identifiable, Hashable {
+nonisolated struct HistorySnapshot: Identifiable, Hashable {
     let id: UUID
     let sessionId: UUID
     let sessionDate: Date
@@ -309,7 +318,7 @@ struct HistorySnapshot: Identifiable, Hashable {
 }
 
 extension SetEntry {
-    var formattedWeight: String {
+    nonisolated var formattedWeight: String {
         if weight.rounded(.towardZero) == weight {
             return String(Int(weight))
         }
@@ -318,18 +327,18 @@ extension SetEntry {
 }
 
 extension RegimenItem {
-    var targetSummary: String {
+    nonisolated var targetSummary: String {
         ExerciseTargetSummary.text(setCount: plannedSetCount, repRange: plannedRepRange)
     }
 }
 
 extension WorkoutExerciseEntry {
-    var targetSummary: String {
+    nonisolated var targetSummary: String {
         ExerciseTargetSummary.text(setCount: plannedSetCount, repRange: plannedRepRange)
     }
 }
 
-enum ExerciseTargetSummary {
+nonisolated enum ExerciseTargetSummary {
     static func text(setCount: Int?, repRange: RepRange?) -> String {
         switch (setCount, repRange) {
         case let (.some(setCount), .some(repRange)):

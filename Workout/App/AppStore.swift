@@ -275,6 +275,18 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func deleteWorkoutSession(_ sessionId: UUID) {
+        appData.workoutSessions.removeAll { $0.id == sessionId }
+        if appData.activeWorkoutSessionId == sessionId {
+            appData.activeWorkoutSessionId = nil
+        }
+        if presentedWorkoutSessionID == sessionId {
+            presentedWorkoutSessionID = nil
+        }
+        touch()
+        Haptics.medium()
+    }
+
     func markExerciseComplete(sessionId: UUID, entryId: UUID) {
         mutateEntry(sessionId: sessionId, entryId: entryId) { entry in
             entry.status = .completed

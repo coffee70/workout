@@ -40,7 +40,7 @@ struct WorkoutChecklistView: View {
             VStack(alignment: .leading, spacing: 18) {
                 SectionTitle(eyebrow: session.locationNameSnapshot, title: session.regimenDayNameSnapshot ?? "Workout")
 
-                Text("Swipe inside each exercise to change variation or history gym. Tap to log sets.")
+                Text("Swipe inside each exercise to change variation. Tap to log sets.")
                     .foregroundStyle(AppTheme.textSecondary)
 
                 ForEach(session.exerciseEntries.sorted(by: { $0.orderIndex < $1.orderIndex })) { entry in
@@ -88,11 +88,8 @@ struct WorkoutEntryCard: View {
                             .foregroundStyle(AppTheme.accentSecondary)
                     }
                     Spacer()
-                    StatusPill(title: entry.status.rawValue, color: pillColor)
+                    StatusPill(title: entry.status.displayName, color: pillColor)
                 }
-
-                Text("History gym: \(entry.viewedHistoryLocationNameSnapshot ?? session.locationNameSnapshot)")
-                    .foregroundStyle(AppTheme.textMuted)
 
                 let primary = primaryHistory(from: history)
                 if let snapshot = primary.snapshot {
@@ -111,27 +108,6 @@ struct WorkoutEntryCard: View {
                 }
             }
         }
-        .gesture(
-            DragGesture(minimumDistance: 18)
-                .onEnded { value in
-                    if abs(value.translation.width) > abs(value.translation.height) {
-                        let direction = value.translation.width < 0 ? 1 : -1
-                        store.cycleVariation(sessionId: session.id, entryId: entry.id, direction: direction)
-                    } else {
-                        cycleLocation(translation: value.translation.height)
-                    }
-                }
-        )
-    }
-
-    private func cycleLocation(translation: CGFloat) {
-        let locations = store.activeLocations
-        guard !locations.isEmpty else { return }
-        let currentId = entry.viewedHistoryLocationId ?? session.locationId
-        guard let index = locations.firstIndex(where: { $0.id == currentId }) else { return }
-        let delta = translation < 0 ? 1 : -1
-        let nextIndex = (index + delta + locations.count) % locations.count
-        store.updateViewedHistoryLocation(sessionId: session.id, entryId: entry.id, locationId: locations[nextIndex].id)
     }
 
     private var pillColor: Color {
@@ -171,16 +147,17 @@ struct ExerciseLoggingView: View {
     var body: some View {
         if let session, let entry {
             let history = store.history(for: session, entry: entry)
+            let viewedHistoryLocationName = entry.viewedHistoryLocationNameSnapshot ?? session.locationNameSnapshot
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    SectionTitle(eyebrow: entry.viewedHistoryLocationNameSnapshot ?? session.locationNameSnapshot, title: entry.performedMovementNameSnapshot)
+                    SectionTitle(eyebrow: session.regimenDayNameSnapshot ?? "Workout", title: entry.performedMovementNameSnapshot)
 
                     SurfaceCard {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(entry.performedVariationNameSnapshot)
                                 .font(.title2.bold())
                                 .foregroundStyle(AppTheme.textPrimary)
-                            Text("Swipe left or right to change variation. Swipe up or down to inspect another gym’s history.")
+                            Text("Swipe left or right to change variation.")
                                 .foregroundStyle(AppTheme.textSecondary)
                         }
                     }
@@ -190,8 +167,6 @@ struct ExerciseLoggingView: View {
                                 if abs(value.translation.width) > abs(value.translation.height) {
                                     let direction = value.translation.width < 0 ? 1 : -1
                                     store.cycleVariation(sessionId: session.id, entryId: entry.id, direction: direction)
-                                } else {
-                                    cycleLocation(currentEntry: entry, currentSession: session, translation: value.translation.height)
                                 }
                             }
                     )
@@ -199,7 +174,13 @@ struct ExerciseLoggingView: View {
                     TargetCard(entry: entry)
 
                     let primary = primaryHistory(from: history)
-                    HistorySection(title: primary.title, snapshot: primary.snapshot)
+                    HistorySection(
+                        title: primary.title,
+                        selectedLocationName: viewedHistoryLocationName,
+                        snapshot: primary.snapshot
+                    ) { direction in
+                        cycleLocation(currentEntry: entry, currentSession: session, direction: direction)
+                    }
 
                     if !history.movementMatches.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
@@ -231,23 +212,42 @@ struct ExerciseLoggingView: View {
                                     LargeMetricButton(value: set.formattedWeight, label: "Weight") {
                                         startEditing(setId: set.id, field: .weight, initialValue: set.formattedWeight)
                                     }
-                                    LargeMetricButton(value: "\(set.reps)", label: entry.plannedRepRange.map { "Reps • \($0.displayText)" } ?? "Reps") {
+                                    LargeMetricButton(value: "\(set.reps)", label: "Reps") {
                                         startEditing(setId: set.id, field: .reps, initialValue: "\(set.reps)")
                                     }
-                                }
-                            }
-                            .contextMenu {
-                                Button("Delete Set", role: .destructive) {
-                                    store.deleteSet(sessionId: session.id, entryId: entry.id, setId: set.id)
+                                    Button(role: .destructive) {
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            store.deleteSet(sessionId: session.id, entryId: entry.id, setId: set.id)
+                                        }
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.headline.weight(.semibold))
+                                            .foregroundStyle(AppTheme.danger)
+                                            .frame(width: 36, height: 36)
+                                            .background(
+                                                Circle()
+                                                    .fill(AppTheme.danger.opacity(0.18))
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Delete Set \(set.setNumber)")
                                 }
                             }
                         }
                     }
+                    .animation(.easeInOut(duration: 0.2), value: entry.sets.map(\.id))
 
-                    Button("Add Set") {
+                    Button {
                         store.addSet(sessionId: session.id, entryId: entry.id)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.headline)
+                                .foregroundStyle(AppTheme.accent)
+                            Text("Add Set")
+                        }
                     }
-                    .buttonStyle(PrimaryButtonStyle())
+                    .buttonStyle(AddSetButtonStyle())
 
                     HStack(spacing: 12) {
                         Button("Complete") {
@@ -281,13 +281,12 @@ struct ExerciseLoggingView: View {
         }
     }
 
-    private func cycleLocation(currentEntry: WorkoutExerciseEntry, currentSession: WorkoutSession, translation: CGFloat) {
+    private func cycleLocation(currentEntry: WorkoutExerciseEntry, currentSession: WorkoutSession, direction: Int) {
         let locations = store.activeLocations
         guard !locations.isEmpty else { return }
         let currentId = currentEntry.viewedHistoryLocationId ?? currentSession.locationId
         guard let index = locations.firstIndex(where: { $0.id == currentId }) else { return }
-        let delta = translation < 0 ? 1 : -1
-        let nextIndex = (index + delta + locations.count) % locations.count
+        let nextIndex = (index + direction + locations.count) % locations.count
         store.updateViewedHistoryLocation(sessionId: currentSession.id, entryId: currentEntry.id, locationId: locations[nextIndex].id)
     }
 
@@ -335,7 +334,7 @@ private struct TargetCard: View {
                     .foregroundStyle(AppTheme.textSecondary)
                 Text(entry.targetSummary)
                     .font(.title3.bold())
-                    .foregroundStyle(AppTheme.textPrimary)
+                    .foregroundStyle(AppTheme.accentSecondary)
                 if let plannedVariationNameSnapshot = entry.plannedVariationNameSnapshot,
                    plannedVariationNameSnapshot != entry.performedVariationNameSnapshot {
                     Text("Planned variation: \(plannedVariationNameSnapshot)")
@@ -348,13 +347,19 @@ private struct TargetCard: View {
 
 private struct HistorySection: View {
     let title: String
+    let selectedLocationName: String
     let snapshot: HistorySnapshot?
+    let onCycleLocation: (Int) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(AppTheme.textSecondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textSecondary)
+                Text("Viewing \(selectedLocationName). Swipe left or right to change gyms.")
+                    .foregroundStyle(AppTheme.textMuted)
+            }
             if let snapshot {
                 HistoryCard(snapshot: snapshot)
             } else {
@@ -364,6 +369,15 @@ private struct HistorySection: View {
                 }
             }
         }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 18)
+                .onEnded { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    let direction = value.translation.width < 0 ? 1 : -1
+                    onCycleLocation(direction)
+                }
+        )
     }
 }
 
@@ -406,11 +420,34 @@ private struct LargeMetricButton: View {
     }
 }
 
+private struct AddSetButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .foregroundStyle(AppTheme.textPrimary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 18)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(AppTheme.elevatedSurface)
+                    .opacity(configuration.isPressed ? 0.85 : 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+            )
+    }
+}
+
 private struct NumericPadSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var shouldReplaceOnNextInput = true
+
     let title: String
     @Binding var value: String
     let onSave: () -> Void
+
+    private let sheetHeight: CGFloat = 620
 
     private let rows = [
         ["1", "2", "3"],
@@ -424,6 +461,7 @@ private struct NumericPadSheet: View {
             Text(title)
                 .font(.title2.bold())
                 .foregroundStyle(AppTheme.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Text(value.isEmpty ? "0" : value)
                 .font(.system(size: 48, weight: .bold, design: .rounded))
                 .foregroundStyle(AppTheme.textPrimary)
@@ -453,21 +491,43 @@ private struct NumericPadSheet: View {
             }
             .buttonStyle(PrimaryButtonStyle())
         }
-        .padding()
-        .presentationDetents([.fraction(0.7)])
+        .padding(.horizontal)
+        .padding(.top, 28)
+        .padding(.bottom, 20)
+        .presentationDetents([.height(sheetHeight)])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(AppTheme.background)
         .background(AppTheme.background.ignoresSafeArea())
+        .onAppear {
+            shouldReplaceOnNextInput = true
+        }
     }
 
     private func handle(_ symbol: String) {
         switch symbol {
         case "⌫":
+            if shouldReplaceOnNextInput {
+                value = ""
+                shouldReplaceOnNextInput = false
+                return
+            }
             guard !value.isEmpty else { return }
             value.removeLast()
         case ".":
             guard !value.contains(".") else { return }
-            value += symbol
+            if shouldReplaceOnNextInput {
+                value = "0."
+                shouldReplaceOnNextInput = false
+            } else {
+                value += symbol
+            }
         default:
-            value += symbol
+            if shouldReplaceOnNextInput {
+                value = symbol
+                shouldReplaceOnNextInput = false
+            } else {
+                value += symbol
+            }
         }
     }
 }

@@ -68,16 +68,12 @@ struct HomeView: View {
                         .font(.headline)
                         .foregroundStyle(AppTheme.textSecondary)
                     ForEach(Array(store.recentSessions.prefix(5))) { session in
-                        SurfaceCard {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(session.regimenDayNameSnapshot ?? "Workout")
-                                    .font(.headline)
-                                    .foregroundStyle(AppTheme.textPrimary)
-                                Text(session.locationNameSnapshot)
-                                    .foregroundStyle(AppTheme.textSecondary)
-                                Text(session.date.formatted(date: .abbreviated, time: .shortened))
-                                    .foregroundStyle(AppTheme.textMuted)
+                        SwipeToDeleteSessionCard {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                store.deleteWorkoutSession(session.id)
                             }
+                        } content: {
+                            RecentSessionCard(session: session)
                         }
                     }
                 }
@@ -92,6 +88,99 @@ struct HomeView: View {
             }
             .environmentObject(store)
         }
+    }
+}
+
+private struct RecentSessionCard: View {
+    let session: WorkoutSession
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(session.regimenDayNameSnapshot ?? "Workout")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textPrimary)
+                Text(session.locationNameSnapshot)
+                    .foregroundStyle(AppTheme.textSecondary)
+                Text(session.date.formatted(date: .abbreviated, time: .shortened))
+                    .foregroundStyle(AppTheme.textMuted)
+            }
+        }
+    }
+}
+
+private struct SwipeToDeleteSessionCard<Content: View>: View {
+    let onDelete: () -> Void
+    let content: Content
+
+    @State private var offsetX: CGFloat = 0
+    @State private var dragStartOffset: CGFloat = 0
+    @State private var isDragging = false
+
+    private let revealWidth: CGFloat = 86
+    private let deleteButtonSize: CGFloat = 52
+
+    init(onDelete: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.onDelete = onDelete
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            HStack {
+                Spacer()
+                Button(role: .destructive) {
+                    withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                        offsetX = 0
+                    }
+                    onDelete()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: deleteButtonSize, height: deleteButtonSize)
+                        .background(
+                            Circle()
+                                .fill(AppTheme.danger)
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 14)
+                .accessibilityLabel("Delete Workout Session")
+            }
+
+            content
+                .offset(x: offsetX)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 12)
+                        .onChanged { gesture in
+                            if !isDragging {
+                                dragStartOffset = offsetX
+                                isDragging = true
+                            }
+                            offsetX = min(max(dragStartOffset + gesture.translation.width, -revealWidth), 0)
+                        }
+                        .onEnded { gesture in
+                            let projectedOffset = min(max(dragStartOffset + gesture.translation.width, -revealWidth), 0)
+                            let shouldReveal = projectedOffset < -(revealWidth * 0.45)
+                            withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                                offsetX = shouldReveal ? -revealWidth : 0
+                            }
+                            dragStartOffset = offsetX
+                            isDragging = false
+                        }
+                )
+                .onTapGesture {
+                    guard offsetX != 0 else { return }
+                    withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                        offsetX = 0
+                    }
+                    dragStartOffset = 0
+                    isDragging = false
+                }
+        }
+        .clipped()
     }
 }
 
@@ -115,26 +204,10 @@ struct StartWorkoutView: View {
                             .font(.headline)
                             .foregroundStyle(AppTheme.textSecondary)
                         ForEach(regimen.days.sorted(by: { $0.orderIndex < $1.orderIndex })) { day in
-                            SurfaceCard {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(day.name)
-                                            .font(.title3.bold())
-                                            .foregroundStyle(AppTheme.textPrimary)
-                                        Text("\(day.items.count) movements")
-                                            .foregroundStyle(AppTheme.textMuted)
-                                    }
-                                    Spacer()
-                                    if selectedDayId == day.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(AppTheme.accentSecondary)
-                                            .font(.title2)
-                                    }
-                                }
-                            }
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                    .stroke(selectedDayId == day.id ? AppTheme.accent : Color.clear, lineWidth: 2)
+                            DaySelectionCard(
+                                title: day.name,
+                                movementCount: day.items.count,
+                                isSelected: selectedDayId == day.id
                             )
                             .onTapGesture {
                                 selectedDayId = day.id
@@ -200,5 +273,39 @@ struct StartWorkoutView: View {
                 selectedDayId = regimen?.days.sorted(by: { $0.orderIndex < $1.orderIndex }).first?.id
             }
         }
+    }
+}
+
+private struct DaySelectionCard: View {
+    let title: String
+    let movementCount: Int
+    let isSelected: Bool
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.title3.bold())
+                    .foregroundStyle(AppTheme.textPrimary)
+                Text("\(movementCount) movements")
+                    .foregroundStyle(AppTheme.textMuted)
+            }
+            Spacer()
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(AppTheme.accent)
+                    .font(.title2)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isSelected ? AppTheme.accent.opacity(0.16) : AppTheme.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(isSelected ? AppTheme.accent : Color.white.opacity(0.06), lineWidth: isSelected ? 2 : 1)
+                )
+        )
     }
 }
