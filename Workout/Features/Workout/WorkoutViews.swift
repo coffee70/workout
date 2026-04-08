@@ -83,6 +83,9 @@ struct WorkoutEntryCard: View {
                             .foregroundStyle(AppTheme.textPrimary)
                         Text(entry.performedVariationNameSnapshot)
                             .foregroundStyle(AppTheme.textSecondary)
+                        Text("Target: \(entry.targetSummary)")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppTheme.accentSecondary)
                     }
                     Spacer()
                     StatusPill(title: entry.status.rawValue, color: pillColor)
@@ -91,14 +94,15 @@ struct WorkoutEntryCard: View {
                 Text("History gym: \(entry.viewedHistoryLocationNameSnapshot ?? session.locationNameSnapshot)")
                     .foregroundStyle(AppTheme.textMuted)
 
-                if let primary = history.exact ?? history.variationAnywhere ?? history.movementMatches.first {
+                let primary = primaryHistory(from: history)
+                if let snapshot = primary.snapshot {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Last")
+                        Text(primary.title)
                             .font(.caption.weight(.bold))
                             .foregroundStyle(AppTheme.accent)
-                        Text(primary.variationName)
+                        Text(snapshot.variationName)
                             .foregroundStyle(AppTheme.textPrimary)
-                        Text("\(primary.locationName) • \(primary.summary)")
+                        Text("\(snapshot.locationName) • \(snapshot.summary)")
                             .foregroundStyle(AppTheme.textSecondary)
                     }
                 } else {
@@ -192,7 +196,10 @@ struct ExerciseLoggingView: View {
                             }
                     )
 
-                    HistorySection(title: "Most Relevant", snapshot: history.exact ?? history.variationAnywhere)
+                    TargetCard(entry: entry)
+
+                    let primary = primaryHistory(from: history)
+                    HistorySection(title: primary.title, snapshot: primary.snapshot)
 
                     if !history.movementMatches.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
@@ -224,7 +231,7 @@ struct ExerciseLoggingView: View {
                                     LargeMetricButton(value: set.formattedWeight, label: "Weight") {
                                         startEditing(setId: set.id, field: .weight, initialValue: set.formattedWeight)
                                     }
-                                    LargeMetricButton(value: "\(set.reps)", label: "Reps") {
+                                    LargeMetricButton(value: "\(set.reps)", label: entry.plannedRepRange.map { "Reps • \($0.displayText)" } ?? "Reps") {
                                         startEditing(setId: set.id, field: .reps, initialValue: "\(set.reps)")
                                     }
                                 }
@@ -296,6 +303,46 @@ struct ExerciseLoggingView: View {
         let weight = editingField == .weight ? Double(numericInput) : nil
         store.updateSet(sessionId: session.id, entryId: entryID, setId: editingSetID, reps: reps, weight: weight)
         self.editingSetID = nil
+    }
+}
+
+private struct LabeledHistory {
+    let title: String
+    let snapshot: HistorySnapshot?
+}
+
+private func primaryHistory(from history: HistoryResult) -> LabeledHistory {
+    if let snapshot = history.exact {
+        return LabeledHistory(title: "Last at this gym", snapshot: snapshot)
+    }
+    if let snapshot = history.variationAnywhere {
+        return LabeledHistory(title: "Last with this variation", snapshot: snapshot)
+    }
+    if let snapshot = history.movementMatches.first {
+        return LabeledHistory(title: "Other movement history", snapshot: snapshot)
+    }
+    return LabeledHistory(title: "Most Relevant", snapshot: nil)
+}
+
+private struct TargetCard: View {
+    let entry: WorkoutExerciseEntry
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Target")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textSecondary)
+                Text(entry.targetSummary)
+                    .font(.title3.bold())
+                    .foregroundStyle(AppTheme.textPrimary)
+                if let plannedVariationNameSnapshot = entry.plannedVariationNameSnapshot,
+                   plannedVariationNameSnapshot != entry.performedVariationNameSnapshot {
+                    Text("Planned variation: \(plannedVariationNameSnapshot)")
+                        .foregroundStyle(AppTheme.textMuted)
+                }
+            }
+        }
     }
 }
 

@@ -40,7 +40,6 @@ struct Movement: Codable, Identifiable, Hashable {
     var aliases: [String]
     var primaryMuscleGroups: [MuscleGroup]
     var secondaryMuscleGroups: [MuscleGroup]
-    var equipmentCategory: EquipmentCategory?
     var movementPattern: MovementPattern?
     var notes: String?
     var isArchived: Bool
@@ -241,6 +240,8 @@ struct WorkoutExerciseEntry: Codable, Identifiable, Hashable {
     var plannedMovementNameSnapshot: String?
     var plannedVariationId: UUID?
     var plannedVariationNameSnapshot: String?
+    var plannedSetCount: Int?
+    var plannedRepRange: RepRange?
 
     var performedMovementId: UUID
     var performedMovementNameSnapshot: String
@@ -313,6 +314,33 @@ extension SetEntry {
             return String(Int(weight))
         }
         return String(format: "%.1f", weight)
+    }
+}
+
+extension RegimenItem {
+    var targetSummary: String {
+        ExerciseTargetSummary.text(setCount: plannedSetCount, repRange: plannedRepRange)
+    }
+}
+
+extension WorkoutExerciseEntry {
+    var targetSummary: String {
+        ExerciseTargetSummary.text(setCount: plannedSetCount, repRange: plannedRepRange)
+    }
+}
+
+enum ExerciseTargetSummary {
+    static func text(setCount: Int?, repRange: RepRange?) -> String {
+        switch (setCount, repRange) {
+        case let (.some(setCount), .some(repRange)):
+            return "\(setCount) sets • \(repRange.displayText) reps"
+        case let (.some(setCount), .none):
+            return "\(setCount) sets"
+        case let (.none, .some(repRange)):
+            return "\(repRange.displayText) reps"
+        case (.none, .none):
+            return "No target set"
+        }
     }
 }
 

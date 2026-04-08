@@ -13,6 +13,8 @@ struct WorkoutSessionFactory {
                 plannedMovementNameSnapshot: movement?.canonicalName,
                 plannedVariationId: item.defaultVariationId,
                 plannedVariationNameSnapshot: variation?.name,
+                plannedSetCount: item.plannedSetCount,
+                plannedRepRange: item.plannedRepRange,
                 performedMovementId: movement?.id ?? item.movementId,
                 performedMovementNameSnapshot: movement?.canonicalName ?? "Unknown Movement",
                 performedVariationId: variation?.id ?? UUID(),

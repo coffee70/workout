@@ -295,7 +295,6 @@ final class AppStore: ObservableObject {
         aliases: [String] = [],
         primaryMuscleGroups: [MuscleGroup],
         secondaryMuscleGroups: [MuscleGroup] = [],
-        equipmentCategory: EquipmentCategory? = nil,
         movementPattern: MovementPattern? = nil,
         notes: String?
     ) {
@@ -305,7 +304,6 @@ final class AppStore: ObservableObject {
             appData.movements[index].aliases = aliases
             appData.movements[index].primaryMuscleGroups = primaryMuscleGroups
             appData.movements[index].secondaryMuscleGroups = secondaryMuscleGroups
-            appData.movements[index].equipmentCategory = equipmentCategory
             appData.movements[index].movementPattern = movementPattern
             appData.movements[index].notes = notes?.nilIfBlank
             appData.movements[index].updatedAt = now
@@ -317,7 +315,6 @@ final class AppStore: ObservableObject {
                     aliases: aliases,
                     primaryMuscleGroups: primaryMuscleGroups,
                     secondaryMuscleGroups: secondaryMuscleGroups,
-                    equipmentCategory: equipmentCategory,
                     movementPattern: movementPattern,
                     notes: notes?.nilIfBlank,
                     isArchived: false,
@@ -436,7 +433,7 @@ final class AppStore: ObservableObject {
         touch()
     }
 
-    func addRegimenItem(to regimenId: UUID, dayId: UUID, movementId: UUID, defaultVariationId: UUID?) {
+    func addRegimenItem(to regimenId: UUID, dayId: UUID, movementId: UUID, defaultVariationId: UUID?, plannedSetCount: Int? = 3, plannedRepRange: RepRange? = RepRange(min: 8, max: 12)) {
         guard let regimenIndex = appData.regimens.firstIndex(where: { $0.id == regimenId }),
               let dayIndex = appData.regimens[regimenIndex].days.firstIndex(where: { $0.id == dayId }) else { return }
         let nextIndex = appData.regimens[regimenIndex].days[dayIndex].items.count
@@ -446,11 +443,23 @@ final class AppStore: ObservableObject {
                 orderIndex: nextIndex,
                 movementId: movementId,
                 defaultVariationId: defaultVariationId,
-                plannedSetCount: 3,
-                plannedRepRange: RepRange(min: 8, max: 12),
+                plannedSetCount: plannedSetCount,
+                plannedRepRange: plannedRepRange,
                 notes: nil
             )
         )
+        appData.regimens[regimenIndex].updatedAt = .now
+        touch()
+    }
+
+    func updateRegimenItem(regimenId: UUID, dayId: UUID, itemId: UUID, defaultVariationId: UUID?, plannedSetCount: Int?, plannedRepRange: RepRange?, notes: String?) {
+        guard let regimenIndex = appData.regimens.firstIndex(where: { $0.id == regimenId }),
+              let dayIndex = appData.regimens[regimenIndex].days.firstIndex(where: { $0.id == dayId }),
+              let itemIndex = appData.regimens[regimenIndex].days[dayIndex].items.firstIndex(where: { $0.id == itemId }) else { return }
+        appData.regimens[regimenIndex].days[dayIndex].items[itemIndex].defaultVariationId = defaultVariationId
+        appData.regimens[regimenIndex].days[dayIndex].items[itemIndex].plannedSetCount = plannedSetCount
+        appData.regimens[regimenIndex].days[dayIndex].items[itemIndex].plannedRepRange = plannedRepRange
+        appData.regimens[regimenIndex].days[dayIndex].items[itemIndex].notes = notes?.nilIfBlank
         appData.regimens[regimenIndex].updatedAt = .now
         touch()
     }
