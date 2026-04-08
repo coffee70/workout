@@ -40,7 +40,7 @@ struct WorkoutChecklistView: View {
             VStack(alignment: .leading, spacing: 18) {
                 SectionTitle(eyebrow: session.locationNameSnapshot, title: session.regimenDayNameSnapshot ?? "Workout")
 
-                Text("Swipe inside each exercise to change variation. Tap to log sets.")
+                Text("Tap an exercise to log sets.")
                     .foregroundStyle(AppTheme.textSecondary)
 
                 ForEach(session.exerciseEntries.sorted(by: { $0.orderIndex < $1.orderIndex })) { entry in
@@ -102,9 +102,6 @@ struct WorkoutEntryCard: View {
                         Text("\(snapshot.locationName) • \(snapshot.summary)")
                             .foregroundStyle(AppTheme.textSecondary)
                     }
-                } else {
-                    Text("No history yet for this context.")
-                        .foregroundStyle(AppTheme.textMuted)
                 }
             }
         }
@@ -130,6 +127,7 @@ struct ExerciseLoggingView: View {
     @State private var editingSetID: UUID?
     @State private var editingField: EditingField = .weight
     @State private var numericInput = ""
+    @State private var isScrubbingMetric = false
 
     enum EditingField {
         case weight
@@ -144,42 +142,85 @@ struct ExerciseLoggingView: View {
         session?.exerciseEntries.first(where: { $0.id == entryID })
     }
 
+    private var variationDeckItems: [VariationDeckCardItem] {
+        guard let entry else { return [] }
+        let variations = store.variations(for: entry.performedMovementId)
+        guard !variations.isEmpty else { return [] }
+
+        let order = orderedIDs(
+            currentIDs: variations.map(\.id),
+            preferredOrder: [],
+            fallbackCurrentID: entry.performedVariationId
+        )
+        let variationsByID = Dictionary(uniqueKeysWithValues: variations.map { ($0.id, $0) })
+        return order.compactMap { id in
+            variationsByID[id].map(VariationDeckCardItem.init)
+        }
+    }
+
+    private var historyDeckItems: [HistoryLocationDeckItem] {
+        guard let session, let entry else { return [] }
+        let locations = store.activeLocations
+        guard !locations.isEmpty else { return [] }
+
+        let currentLocationId = entry.viewedHistoryLocationId ?? session.locationId
+        let order = orderedIDs(
+            currentIDs: locations.map(\.id),
+            preferredOrder: [],
+            fallbackCurrentID: currentLocationId
+        )
+        let locationsByID = Dictionary(uniqueKeysWithValues: locations.map { ($0.id, $0) })
+
+        return order.compactMap { locationID in
+            guard let location = locationsByID[locationID] else { return nil }
+            let labeledHistory = primaryHistory(from: store.history(for: session, entry: entry, locationId: location.id))
+            return HistoryLocationDeckItem(location: location, title: labeledHistory.title, snapshot: labeledHistory.snapshot)
+        }
+    }
+
     var body: some View {
         if let session, let entry {
             let history = store.history(for: session, entry: entry)
-            let viewedHistoryLocationName = entry.viewedHistoryLocationNameSnapshot ?? session.locationNameSnapshot
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     SectionTitle(eyebrow: session.regimenDayNameSnapshot ?? "Workout", title: entry.performedMovementNameSnapshot)
 
-                    SurfaceCard {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(entry.performedVariationNameSnapshot)
-                                .font(.title2.bold())
-                                .foregroundStyle(AppTheme.textPrimary)
-                            Text("Swipe left or right to change variation.")
-                                .foregroundStyle(AppTheme.textSecondary)
-                        }
-                    }
-                    .gesture(
-                        DragGesture(minimumDistance: 18)
-                            .onEnded { value in
-                                if abs(value.translation.width) > abs(value.translation.height) {
-                                    let direction = value.translation.width < 0 ? 1 : -1
-                                    store.cycleVariation(sessionId: session.id, entryId: entry.id, direction: direction)
-                                }
-                            }
-                    )
-
                     TargetCard(entry: entry)
 
-                    let primary = primaryHistory(from: history)
+                    Text("Variation")
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.textSecondary)
+                    RotatingSwipeDeck(items: variationDeckItems, onAdvance: { _ in
+                        store.advanceVariation(sessionId: session.id, entryId: entry.id)
+                    }) { item in
+                        SurfaceCard {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack(alignment: .top) {
+                                    Text(item.variation.name)
+                                        .font(.title2.bold())
+                                        .foregroundStyle(AppTheme.textPrimary)
+                                    Spacer()
+                                    if item.variation.id == entry.plannedVariationId {
+                                        StatusPill(title: "Planned", color: AppTheme.accentSecondary)
+                                    }
+                                }
+                                if let equipmentCategory = item.variation.equipmentCategory {
+                                    Text(equipmentCategory.displayName)
+                                        .foregroundStyle(AppTheme.textSecondary)
+                                } else {
+                                    Text(entry.performedMovementNameSnapshot)
+                                        .foregroundStyle(AppTheme.textSecondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
+                        }
+                    }
+                    .frame(height: 170)
+
                     HistorySection(
-                        title: primary.title,
-                        selectedLocationName: viewedHistoryLocationName,
-                        snapshot: primary.snapshot
-                    ) { direction in
-                        cycleLocation(currentEntry: entry, currentSession: session, direction: direction)
+                        items: historyDeckItems
+                    ) {
+                        store.advanceViewedHistoryLocation(sessionId: session.id, entryId: entry.id)
                     }
 
                     if !history.movementMatches.isEmpty {
@@ -200,7 +241,7 @@ struct ExerciseLoggingView: View {
 
                         ForEach(entry.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
                             SurfaceCard {
-                                HStack {
+                                HStack(spacing: 12) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text("Set \(set.setNumber)")
                                             .font(.headline)
@@ -208,13 +249,30 @@ struct ExerciseLoggingView: View {
                                         Text(set.weightUnit.displayName)
                                             .foregroundStyle(AppTheme.textMuted)
                                     }
-                                    Spacer()
-                                    LargeMetricButton(value: set.formattedWeight, label: "Weight") {
+                                    LargeMetricButton(
+                                        value: set.weight,
+                                        label: "Weight",
+                                        configuration: .weight
+                                    ) {
                                         startEditing(setId: set.id, field: .weight, initialValue: set.formattedWeight)
+                                    } onScrubActiveChange: { isActive in
+                                        isScrubbingMetric = isActive
+                                    } onValueChange: { updatedWeight in
+                                        store.updateSet(sessionId: session.id, entryId: entry.id, setId: set.id, weight: updatedWeight)
                                     }
-                                    LargeMetricButton(value: "\(set.reps)", label: "Reps") {
+                                    .frame(maxWidth: .infinity)
+                                    LargeMetricButton(
+                                        value: Double(set.reps),
+                                        label: "Reps",
+                                        configuration: .reps
+                                    ) {
                                         startEditing(setId: set.id, field: .reps, initialValue: "\(set.reps)")
+                                    } onScrubActiveChange: { isActive in
+                                        isScrubbingMetric = isActive
+                                    } onValueChange: { updatedReps in
+                                        store.updateSet(sessionId: session.id, entryId: entry.id, setId: set.id, reps: Int(updatedReps))
                                     }
+                                    .frame(maxWidth: .infinity)
                                     Button(role: .destructive) {
                                         withAnimation(.easeInOut(duration: 0.2)) {
                                             store.deleteSet(sessionId: session.id, entryId: entry.id, setId: set.id)
@@ -265,6 +323,7 @@ struct ExerciseLoggingView: View {
                 }
                 .padding()
             }
+            .scrollDisabled(isScrubbingMetric)
             .background(AppTheme.background.ignoresSafeArea())
             .sheet(isPresented: Binding(
                 get: { editingSetID != nil },
@@ -279,15 +338,6 @@ struct ExerciseLoggingView: View {
         } else {
             ContentUnavailableView("Exercise Not Found", systemImage: "figure.strengthtraining.traditional")
         }
-    }
-
-    private func cycleLocation(currentEntry: WorkoutExerciseEntry, currentSession: WorkoutSession, direction: Int) {
-        let locations = store.activeLocations
-        guard !locations.isEmpty else { return }
-        let currentId = currentEntry.viewedHistoryLocationId ?? currentSession.locationId
-        guard let index = locations.firstIndex(where: { $0.id == currentId }) else { return }
-        let nextIndex = (index + direction + locations.count) % locations.count
-        store.updateViewedHistoryLocation(sessionId: currentSession.id, entryId: currentEntry.id, locationId: locations[nextIndex].id)
     }
 
     private func startEditing(setId: UUID, field: EditingField, initialValue: String) {
@@ -305,9 +355,42 @@ struct ExerciseLoggingView: View {
     }
 }
 
+private struct VariationDeckCardItem: Identifiable, Equatable {
+    let variation: Variation
+
+    var id: UUID { variation.id }
+}
+
+private struct HistoryLocationDeckItem: Identifiable, Equatable {
+    let location: Location
+    let title: String
+    let snapshot: HistorySnapshot?
+
+    var id: UUID { location.id }
+}
+
 private struct LabeledHistory {
     let title: String
     let snapshot: HistorySnapshot?
+}
+
+private func orderedIDs(
+    currentIDs: [UUID],
+    preferredOrder: [UUID],
+    fallbackCurrentID: UUID
+) -> [UUID] {
+    guard !currentIDs.isEmpty else { return [] }
+
+    let currentIDSet = Set(currentIDs)
+    let filteredPreferred = preferredOrder.filter { currentIDSet.contains($0) }
+    let missingIDs = currentIDs.filter { !filteredPreferred.contains($0) }
+    let merged = filteredPreferred + missingIDs
+
+    if let currentIndex = merged.firstIndex(of: fallbackCurrentID) {
+        return merged.rotated(startingAt: currentIndex)
+    }
+
+    return merged
 }
 
 private func primaryHistory(from history: HistoryResult) -> LabeledHistory {
@@ -335,49 +418,45 @@ private struct TargetCard: View {
                 Text(entry.targetSummary)
                     .font(.title3.bold())
                     .foregroundStyle(AppTheme.accentSecondary)
-                if let plannedVariationNameSnapshot = entry.plannedVariationNameSnapshot,
-                   plannedVariationNameSnapshot != entry.performedVariationNameSnapshot {
-                    Text("Planned variation: \(plannedVariationNameSnapshot)")
-                        .foregroundStyle(AppTheme.textMuted)
-                }
             }
         }
     }
 }
 
 private struct HistorySection: View {
-    let title: String
-    let selectedLocationName: String
-    let snapshot: HistorySnapshot?
-    let onCycleLocation: (Int) -> Void
+    let items: [HistoryLocationDeckItem]
+    let onAdvanceLocation: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(AppTheme.textSecondary)
-                Text("Viewing \(selectedLocationName). Swipe left or right to change gyms.")
-                    .foregroundStyle(AppTheme.textMuted)
-            }
-            if let snapshot {
-                HistoryCard(snapshot: snapshot)
-            } else {
+            Text("History")
+                .font(.headline)
+                .foregroundStyle(AppTheme.textSecondary)
+            RotatingSwipeDeck(items: items, onAdvance: { _ in
+                onAdvanceLocation()
+            }) { item in
                 SurfaceCard {
-                    Text("No matching history yet.")
-                        .foregroundStyle(AppTheme.textMuted)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(item.location.name)
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.textPrimary)
+                        Text(item.title)
+                            .foregroundStyle(AppTheme.textSecondary)
+                        if let snapshot = item.snapshot {
+                            Text(snapshot.summary)
+                                .foregroundStyle(AppTheme.textPrimary)
+                            Text(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))
+                                .foregroundStyle(AppTheme.textMuted)
+                        } else {
+                            Text("No matching history yet.")
+                                .foregroundStyle(AppTheme.textMuted)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 140, alignment: .leading)
                 }
             }
+            .frame(height: 190)
         }
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 18)
-                .onEnded { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    let direction = value.translation.width < 0 ? 1 : -1
-                    onCycleLocation(direction)
-                }
-        )
     }
 }
 
@@ -400,23 +479,202 @@ private struct HistoryCard: View {
 }
 
 private struct LargeMetricButton: View {
-    let value: String
+    let value: Double
     let label: String
+    let configuration: MetricScrubConfiguration
     let action: () -> Void
+    let onScrubActiveChange: (Bool) -> Void
+    let onValueChange: (Double) -> Void
+
+    @State private var previewValue: Double?
+    @State private var scrubSession: MetricScrubSession?
+
+    private var displayedValue: Double {
+        previewValue ?? value
+    }
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                Text(value)
-                    .font(.title.bold())
-                Text(label)
-                    .font(.caption.weight(.bold))
-                    .textCase(.uppercase)
-            }
-            .foregroundStyle(AppTheme.textPrimary)
-            .frame(width: 92, height: 92)
-            .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        let dragGesture = DragGesture(minimumDistance: 0)
+            .onChanged(handleDragChanged(_:))
+            .onEnded(handleDragEnded(_:))
+
+        VStack(spacing: 6) {
+            Text(configuration.displayText(for: displayedValue))
+                .font(.title.bold())
+            Text(label)
+                .font(.caption.weight(.bold))
+                .textCase(.uppercase)
         }
+        .foregroundStyle(AppTheme.textPrimary)
+        .frame(maxWidth: .infinity, minHeight: 92)
+        .background(backgroundStyle)
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .highPriorityGesture(dragGesture)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(label)
+        .accessibilityValue(configuration.displayText(for: displayedValue))
+    }
+
+    private var backgroundStyle: some View {
+        RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .fill(scrubSession?.isActive == true ? AppTheme.accent.opacity(0.22) : AppTheme.elevatedSurface)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(scrubSession?.isActive == true ? AppTheme.accent.opacity(0.5) : Color.white.opacity(0.05), lineWidth: 1)
+            )
+    }
+
+    private func handleDragChanged(_ drag: DragGesture.Value) {
+        if scrubSession == nil {
+            scrubSession = MetricScrubSession(
+                startingValue: value,
+                lastLocation: drag.location,
+                lastTimestamp: drag.time,
+                rawValue: value,
+                lastHapticBucket: configuration.hapticBucket(for: value)
+            )
+        }
+
+        guard var session = scrubSession else { return }
+        let verticalTravel = abs(drag.translation.height)
+
+        if !session.isActive {
+            session.lastLocation = drag.location
+            session.lastTimestamp = drag.time
+
+            if verticalTravel >= configuration.activationThreshold {
+                session.isActive = true
+                onScrubActiveChange(true)
+            } else {
+                scrubSession = session
+                return
+            }
+        }
+
+        let elapsed = max(drag.time.timeIntervalSince(session.lastTimestamp), 0.016)
+        let deltaY = session.lastLocation.y - drag.location.y
+        let speed = abs(deltaY) / CGFloat(elapsed)
+        let multiplier = configuration.speedMultiplier(for: speed)
+        let valueDelta = Double(deltaY / configuration.pointsPerUnit) * multiplier
+        let nextRawValue = configuration.clamp(session.rawValue + valueDelta)
+        let snappedValue = configuration.snap(nextRawValue)
+
+        session.rawValue = nextRawValue
+        session.lastLocation = drag.location
+        session.lastTimestamp = drag.time
+
+        if snappedValue != displayedValue {
+            previewValue = snappedValue
+            onValueChange(snappedValue)
+        }
+
+        let hapticBucket = configuration.hapticBucket(for: snappedValue)
+        if hapticBucket != session.lastHapticBucket {
+            Haptics.light()
+            session.lastHapticBucket = hapticBucket
+        }
+
+        scrubSession = session
+    }
+
+    private func handleDragEnded(_ drag: DragGesture.Value) {
+        defer {
+            previewValue = nil
+            scrubSession = nil
+            onScrubActiveChange(false)
+        }
+
+        guard let session = scrubSession else {
+            action()
+            return
+        }
+
+        if !session.isActive && abs(drag.translation.height) < configuration.activationThreshold {
+            action()
+        }
+    }
+}
+
+private struct MetricScrubSession {
+    let startingValue: Double
+    var lastLocation: CGPoint
+    var lastTimestamp: Date
+    var rawValue: Double
+    var lastHapticBucket: Int
+    var isActive = false
+}
+
+private struct MetricScrubConfiguration {
+    let activationThreshold: CGFloat
+    let pointsPerUnit: CGFloat
+    let minValue: Double
+    let maxValue: Double
+    let snapStep: Double
+    let hapticStep: Double
+    let speedBands: [(maxSpeed: CGFloat, multiplier: Double)]
+    let display: (Double) -> String
+
+    static let weight = MetricScrubConfiguration(
+        activationThreshold: 10,
+        pointsPerUnit: 18,
+        minValue: 0,
+        maxValue: 999.9,
+        snapStep: 0.1,
+        hapticStep: 1,
+        speedBands: [
+            (maxSpeed: 140, multiplier: 0.35),
+            (maxSpeed: 320, multiplier: 0.8),
+            (maxSpeed: 620, multiplier: 1.8),
+            (maxSpeed: .greatestFiniteMagnitude, multiplier: 3.4)
+        ],
+        display: { value in
+            if value.rounded(.towardZero) == value {
+                return String(Int(value))
+            }
+            return String(format: "%.1f", value)
+        }
+    )
+
+    static let reps = MetricScrubConfiguration(
+        activationThreshold: 10,
+        pointsPerUnit: 34,
+        minValue: 0,
+        maxValue: 99,
+        snapStep: 1,
+        hapticStep: 1,
+        speedBands: [
+            (maxSpeed: 140, multiplier: 0.45),
+            (maxSpeed: 320, multiplier: 0.9),
+            (maxSpeed: 620, multiplier: 1.8),
+            (maxSpeed: .greatestFiniteMagnitude, multiplier: 3)
+        ],
+        display: { value in
+            String(Int(value))
+        }
+    )
+
+    func clamp(_ value: Double) -> Double {
+        min(max(value, minValue), maxValue)
+    }
+
+    func snap(_ value: Double) -> Double {
+        let stepped = (value / snapStep).rounded() * snapStep
+        let clamped = clamp(stepped)
+        let precision = max(0, Int(round(-log10(snapStep))))
+        let scale = pow(10.0, Double(precision))
+        return (clamped * scale).rounded() / scale
+    }
+
+    func hapticBucket(for value: Double) -> Int {
+        Int((clamp(value) / hapticStep).rounded(.towardZero))
+    }
+
+    func speedMultiplier(for speed: CGFloat) -> Double {
+        speedBands.first(where: { speed <= $0.maxSpeed })?.multiplier ?? 1
+    }
+
+    func displayText(for value: Double) -> String {
+        display(clamp(value))
     }
 }
 

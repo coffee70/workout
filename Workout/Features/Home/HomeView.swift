@@ -152,6 +152,7 @@ private struct SwipeToDeleteSessionCard<Content: View>: View {
             content
                 .offset(x: offsetX)
                 .contentShape(Rectangle())
+                .allowsHitTesting(offsetX == 0)
                 .gesture(
                     DragGesture(minimumDistance: 12)
                         .onChanged { gesture in
@@ -171,14 +172,6 @@ private struct SwipeToDeleteSessionCard<Content: View>: View {
                             isDragging = false
                         }
                 )
-                .onTapGesture {
-                    guard offsetX != 0 else { return }
-                    withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                        offsetX = 0
-                    }
-                    dragStartOffset = 0
-                    isDragging = false
-                }
         }
         .clipped()
     }
@@ -192,6 +185,10 @@ struct StartWorkoutView: View {
     @State private var selectedLocationIndex = 0
 
     var regimen: Regimen? { store.currentRegimen }
+    var orderedLocations: [Location] {
+        guard !store.activeLocations.isEmpty else { return [] }
+        return store.activeLocations.rotated(startingAt: selectedLocationIndex)
+    }
 
     var body: some View {
         ScrollView {
@@ -226,24 +223,28 @@ struct StartWorkoutView: View {
                     if store.activeLocations.isEmpty {
                         ContentUnavailableView("No Locations", systemImage: "mappin.and.ellipse", description: Text("Add a location in Library before starting a workout."))
                     } else {
-                        TabView(selection: $selectedLocationIndex) {
-                            ForEach(Array(store.activeLocations.enumerated()), id: \.offset) { index, location in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(store.activeLocations.count > 1 ? "Swipe a card away to cycle gyms." : "Your workout will use this gym.")
+                                .foregroundStyle(AppTheme.textMuted)
+
+                            RotatingSwipeDeck(items: orderedLocations, onAdvance: { _ in
+                                guard !store.activeLocations.isEmpty else { return }
+                                selectedLocationIndex = (selectedLocationIndex + 1) % store.activeLocations.count
+                            }) { location in
                                 SurfaceCard {
                                     VStack(alignment: .leading, spacing: 10) {
                                         Text(location.name)
                                             .font(.largeTitle.bold())
                                             .foregroundStyle(AppTheme.textPrimary)
-                                        Text(location.notes ?? "Swipe between gyms to set the session context.")
+                                        Text(location.notes ?? "Use this location to set the workout context.")
                                             .foregroundStyle(AppTheme.textSecondary)
                                     }
                                     .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
                                 }
-                                .tag(index)
                                 .padding(.horizontal, 4)
                             }
+                            .frame(height: 220)
                         }
-                        .frame(height: 220)
-                        .tabViewStyle(.page(indexDisplayMode: .always))
                     }
                 }
 

@@ -121,10 +121,14 @@ final class AppStore: ObservableObject {
 
     func history(for session: WorkoutSession, entry: WorkoutExerciseEntry) -> HistoryResult {
         let lookupLocation = entry.viewedHistoryLocationId ?? session.locationId
+        return history(for: session, entry: entry, locationId: lookupLocation)
+    }
+
+    func history(for session: WorkoutSession, entry: WorkoutExerciseEntry, locationId: UUID) -> HistoryResult {
         return historyService.lookup(
             variationId: entry.performedVariationId,
             movementId: entry.performedMovementId,
-            currentLocationId: lookupLocation,
+            currentLocationId: locationId,
             excluding: session.id,
             in: appData.workoutSessions
         )
@@ -215,6 +219,38 @@ final class AppStore: ObservableObject {
         }
         let nextIndex = (currentIndex + direction + allVariations.count) % allVariations.count
         setVariation(sessionId: sessionId, entryId: entryId, variation: allVariations[nextIndex])
+    }
+
+    func advanceVariation(sessionId: UUID, entryId: UUID) {
+        guard let entry = workoutEntry(sessionId: sessionId, entryId: entryId) else { return }
+        let allVariations = variations(for: entry.performedMovementId)
+        guard !allVariations.isEmpty else { return }
+        guard let currentIndex = allVariations.firstIndex(where: { $0.id == entry.performedVariationId }) else {
+            setVariation(sessionId: sessionId, entryId: entryId, variation: allVariations[0])
+            return
+        }
+
+        let nextIndex = (currentIndex + 1) % allVariations.count
+        guard allVariations[nextIndex].id != entry.performedVariationId else { return }
+        setVariation(sessionId: sessionId, entryId: entryId, variation: allVariations[nextIndex])
+    }
+
+    func advanceViewedHistoryLocation(sessionId: UUID, entryId: UUID) {
+        guard let session = appData.workoutSessions.first(where: { $0.id == sessionId }),
+              let entry = session.exerciseEntries.first(where: { $0.id == entryId }) else { return }
+
+        let locations = activeLocations
+        guard !locations.isEmpty else { return }
+
+        let currentId = entry.viewedHistoryLocationId ?? session.locationId
+        guard let currentIndex = locations.firstIndex(where: { $0.id == currentId }) else {
+            updateViewedHistoryLocation(sessionId: sessionId, entryId: entryId, locationId: locations[0].id)
+            return
+        }
+
+        let nextIndex = (currentIndex + 1) % locations.count
+        guard locations[nextIndex].id != currentId else { return }
+        updateViewedHistoryLocation(sessionId: sessionId, entryId: entryId, locationId: locations[nextIndex].id)
     }
 
     func setVariation(sessionId: UUID, entryId: UUID, variation: Variation) {
