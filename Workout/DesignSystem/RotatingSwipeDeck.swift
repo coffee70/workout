@@ -131,6 +131,7 @@ struct RotatingSwipeDeck<Item: Identifiable & Equatable, CardContent: View>: Vie
                 let targetHeight = value.translation.height + (value.predictedEndTranslation.height * 0.15)
 
                 isAnimatingOut = true
+                Haptics.medium()
 
                 withAnimation(.easeOut(duration: 0.22)) {
                     dragOffset = CGSize(width: targetWidth, height: targetHeight)
