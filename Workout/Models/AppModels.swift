@@ -412,6 +412,21 @@ extension SetEntry {
     }
 }
 
+extension Regimen {
+    /// Plain-text export: name, day names, movement names, and set/rep targets only (no notes, variation, location, or history).
+    nonisolated func clipboardPlainText(movementName: (UUID) -> String) -> String {
+        var lines: [String] = [name, ""]
+        for day in days.sorted(by: { $0.orderIndex < $1.orderIndex }) {
+            lines.append(day.name)
+            for item in day.items.sorted(by: { $0.orderIndex < $1.orderIndex }) {
+                lines.append("  • \(movementName(item.movementId)) — \(item.targetSummary)")
+            }
+            lines.append("")
+        }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+    }
+}
+
 extension RegimenItem {
     nonisolated var targetSummary: String {
         ExerciseTargetSummary.text(setCount: plannedSetCount, repRange: plannedRepRange)

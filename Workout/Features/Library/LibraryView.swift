@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct LibraryView: View {
     @EnvironmentObject private var store: AppStore
@@ -606,9 +607,22 @@ private struct RegimenDetailView: View {
     @State private var itemDraft: RegimenItemDraft?
     @State private var regimenToArchive: Regimen?
     @State private var expandedDayIds: Set<UUID> = []
+    @State private var didCopyRegimen = false
+    @State private var copyFeedbackTask: Task<Void, Never>?
 
     private var regimen: Regimen? {
         store.regimen(regimenId)
+    }
+
+    private func copyRegimenToClipboard(_ regimen: Regimen) {
+        UIPasteboard.general.string = regimen.clipboardPlainText(movementName: { store.movementName($0) })
+        copyFeedbackTask?.cancel()
+        didCopyRegimen = true
+        copyFeedbackTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_350_000_000)
+            guard !Task.isCancelled else { return }
+            didCopyRegimen = false
+        }
     }
 
     var body: some View {
@@ -626,8 +640,18 @@ private struct RegimenDetailView: View {
                                         .foregroundStyle(AppTheme.textSecondary)
                                 }
                                 Spacer()
-                                PillActionButton(title: "Edit", systemImage: "pencil") {
-                                    regimenDraft = RegimenDraft(regimen: regimen)
+                                HStack(spacing: 10) {
+                                    CircularAccentIconButton(
+                                        systemImage: didCopyRegimen ? "checkmark" : "doc.on.doc"
+                                    ) {
+                                        copyRegimenToClipboard(regimen)
+                                    }
+                                    .accessibilityLabel(didCopyRegimen ? "Copied to clipboard" : "Copy regimen to clipboard")
+
+                                    CircularAccentIconButton(systemImage: "pencil") {
+                                        regimenDraft = RegimenDraft(regimen: regimen)
+                                    }
+                                    .accessibilityLabel("Edit regimen")
                                 }
                             }
 
@@ -798,6 +822,11 @@ private struct RegimenDetailView: View {
             }
         } message: {
             Text("Archived regimens are hidden until Show Archived is enabled.")
+        }
+        .onDisappear {
+            copyFeedbackTask?.cancel()
+            copyFeedbackTask = nil
+            didCopyRegimen = false
         }
     }
 }
@@ -1489,19 +1518,19 @@ private struct FlowTagRow: View {
     }
 }
 
-private struct PillActionButton: View {
-    let title: String
+private struct CircularAccentIconButton: View {
     let systemImage: String
     let action: () -> Void
 
+    private let diameter: CGFloat = 48
+
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.caption.weight(.bold))
+            Image(systemName: systemImage)
+                .font(.title3.weight(.semibold))
                 .foregroundStyle(AppTheme.accent)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(AppTheme.accent.opacity(0.14), in: Capsule())
+                .frame(width: diameter, height: diameter)
+                .background(AppTheme.accent.opacity(0.14), in: Circle())
         }
         .buttonStyle(.plain)
     }
