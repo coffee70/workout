@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct WorkoutFlowView: View {
     @Environment(\.dismiss) private var dismiss
@@ -35,6 +36,47 @@ struct WorkoutChecklistView: View {
     @EnvironmentObject private var store: AppStore
     let session: WorkoutSession
 
+    @State private var isAddMovementPresented = false
+    @State private var activeDraggedEntryID: UUID?
+    @State private var proposedDropIndex: Int?
+    @State private var rowFrames: [UUID: CGRect] = [:]
+
+    private var sortedEntries: [WorkoutExerciseEntry] {
+        session.exerciseEntries.sorted(by: { $0.orderIndex < $1.orderIndex })
+    }
+
+    private var sourceIndex: Int? {
+        guard let activeDraggedEntryID else { return nil }
+        return sortedEntries.firstIndex(where: { $0.id == activeDraggedEntryID })
+    }
+
+    private var visibleEntries: [WorkoutExerciseEntry] {
+        guard let activeDraggedEntryID else { return sortedEntries }
+        return sortedEntries.filter { $0.id != activeDraggedEntryID }
+    }
+
+    private var effectiveDropIndex: Int? {
+        guard let sourceIndex else { return nil }
+        return max(0, min(proposedDropIndex ?? sourceIndex, visibleEntries.count))
+    }
+
+    private var renderedOverviewItems: [WorkoutOverviewRenderItem] {
+        guard let effectiveDropIndex else {
+            return sortedEntries.map(WorkoutOverviewRenderItem.entry)
+        }
+
+        var items: [WorkoutOverviewRenderItem] = []
+        for index in 0...visibleEntries.count {
+            if index == effectiveDropIndex {
+                items.append(.placeholder(index))
+            }
+            if index < visibleEntries.count {
+                items.append(.entry(visibleEntries[index]))
+            }
+        }
+        return items
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -43,14 +85,55 @@ struct WorkoutChecklistView: View {
                 Text("Tap an exercise to log sets.")
                     .foregroundStyle(AppTheme.textSecondary)
 
-                ForEach(session.exerciseEntries.sorted(by: { $0.orderIndex < $1.orderIndex })) { entry in
-                    NavigationLink {
-                        ExerciseLoggingView(sessionID: session.id, entryID: entry.id)
-                    } label: {
-                        WorkoutEntryCard(session: session, entry: entry)
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(renderedOverviewItems) { item in
+                        switch item {
+                        case .entry(let entry):
+                            WorkoutOverviewEntryRow(
+                                session: session,
+                                entry: entry,
+                                onDragStarted: { draggedEntryID in
+                                    beginReorder(for: draggedEntryID)
+                                }
+                            )
+                            .environmentObject(store)
+                            .background(
+                                GeometryReader { proxy in
+                                    Color.clear.preference(
+                                        key: WorkoutOverviewRowFramePreferenceKey.self,
+                                        value: [entry.id: proxy.frame(in: .named(WorkoutOverviewReorderCoordinateSpace.name))]
+                                    )
+                                }
+                            )
+                        case .placeholder:
+                            WorkoutOverviewDropPlaceholder()
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
+                .coordinateSpace(name: WorkoutOverviewReorderCoordinateSpace.name)
+                .contentShape(Rectangle())
+                .onPreferenceChange(WorkoutOverviewRowFramePreferenceKey.self) { rowFrames = $0 }
+                .onDrop(
+                    of: [UTType.text],
+                    delegate: WorkoutOverviewReorderDropDelegate(
+                        sortedEntries: sortedEntries,
+                        visibleEntries: visibleEntries,
+                        rowFrames: rowFrames,
+                        activeDraggedEntryID: $activeDraggedEntryID,
+                        proposedDropIndex: $proposedDropIndex,
+                        onCommitMove: { draggedEntryID, targetIndex in
+                            store.moveExercise(sessionId: session.id, entryId: draggedEntryID, toIndex: targetIndex)
+                        },
+                        onReset: resetReorderState
+                    )
+                )
+                .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.84), value: renderedOverviewItems)
+                .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.84), value: activeDraggedEntryID)
+
+                Button("Add Movement") {
+                    isAddMovementPresented = true
+                }
+                .buttonStyle(SecondaryButtonStyle())
 
                 Button("Finish Workout") {
                     store.finishWorkout(sessionId: session.id)
@@ -61,6 +144,39 @@ struct WorkoutChecklistView: View {
         }
         .background(AppTheme.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $isAddMovementPresented) {
+            NavigationStack {
+                ActiveWorkoutMovementPickerView(
+                    mode: .add,
+                    session: session,
+                    sourceEntry: nil,
+                    onConfirm: { selection in
+                        _ = store.appendExercise(
+                            sessionId: session.id,
+                            movementId: selection.movementId,
+                            variationId: selection.variationId,
+                            plannedSetCount: selection.plannedSetCount,
+                            plannedRepRange: selection.plannedRepRange
+                        )
+                        isAddMovementPresented = false
+                    }
+                )
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private func beginReorder(for entryID: UUID) {
+        activeDraggedEntryID = entryID
+        if let sourceIndex = sortedEntries.firstIndex(where: { $0.id == entryID }) {
+            proposedDropIndex = sourceIndex
+        }
+    }
+
+    private func resetReorderState() {
+        activeDraggedEntryID = nil
+        proposedDropIndex = nil
     }
 }
 
@@ -75,35 +191,7 @@ struct WorkoutEntryCard: View {
 
     var body: some View {
         SurfaceCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(entry.performedMovementNameSnapshot)
-                            .font(.title3.bold())
-                            .foregroundStyle(AppTheme.textPrimary)
-                        Text(entry.performedVariationNameSnapshot)
-                            .foregroundStyle(AppTheme.textSecondary)
-                        Text("Target: \(entry.targetSummary)")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AppTheme.accentSecondary)
-                    }
-                    Spacer()
-                    StatusPill(title: entry.status.displayName, color: pillColor)
-                }
-
-                let primary = primaryHistory(from: history)
-                if let snapshot = primary.snapshot {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(primary.title)
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(AppTheme.accent)
-                        Text(snapshot.variationName)
-                            .foregroundStyle(AppTheme.textPrimary)
-                        Text("\(snapshot.locationName) • \(snapshot.summary)")
-                            .foregroundStyle(AppTheme.textSecondary)
-                    }
-                }
-            }
+            WorkoutEntryCardContent(entry: entry, history: history, pillColor: pillColor)
         }
     }
 
@@ -113,6 +201,44 @@ struct WorkoutEntryCard: View {
         case .inProgress: return AppTheme.accent
         case .completed: return AppTheme.accentSecondary
         case .skipped: return AppTheme.warning
+        }
+    }
+}
+
+private struct WorkoutEntryCardContent: View {
+    let entry: WorkoutExerciseEntry
+    let history: HistoryResult
+    let pillColor: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(entry.performedMovementNameSnapshot)
+                        .font(.title3.bold())
+                        .foregroundStyle(AppTheme.textPrimary)
+                    Text(entry.performedVariationNameSnapshot)
+                        .foregroundStyle(AppTheme.textSecondary)
+                    Text("Target: \(entry.targetSummary)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.accentSecondary)
+                }
+                Spacer()
+                StatusPill(title: entry.status.displayName, color: pillColor)
+            }
+
+            let primary = primaryHistory(from: history)
+            if let snapshot = primary.snapshot {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(primary.title)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(AppTheme.accent)
+                    Text(snapshot.variationName)
+                        .foregroundStyle(AppTheme.textPrimary)
+                    Text("\(snapshot.locationName) • \(snapshot.summary)")
+                        .foregroundStyle(AppTheme.textSecondary)
+                }
+            }
         }
     }
 }
@@ -128,6 +254,7 @@ struct ExerciseLoggingView: View {
     @State private var editingField: EditingField = .weight
     @State private var numericInput = ""
     @State private var isScrubbingMetric = false
+    @State private var isReplaceSheetPresented = false
 
     enum EditingField {
         case weight
@@ -173,7 +300,9 @@ struct ExerciseLoggingView: View {
 
         return order.compactMap { locationID in
             guard let location = locationsByID[locationID] else { return nil }
-            let labeledHistory = primaryHistory(from: store.history(for: session, entry: entry, locationId: location.id))
+            let labeledHistory = primaryHistoryForLocationDeck(
+                from: store.history(for: session, entry: entry, locationId: location.id)
+            )
             return HistoryLocationDeckItem(location: location, title: labeledHistory.title, snapshot: labeledHistory.snapshot)
         }
     }
@@ -307,19 +436,31 @@ struct ExerciseLoggingView: View {
                     }
                     .buttonStyle(AddSetButtonStyle())
 
-                    HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Actions")
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.textSecondary)
+
+                        HStack(spacing: 12) {
+                            Button("Skip") {
+                                store.skipExercise(sessionId: session.id, entryId: entry.id)
+                                dismiss()
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+
+                            Button("Replace") {
+                                isReplaceSheetPresented = true
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                        }
+
                         Button("Complete") {
                             store.markExerciseComplete(sessionId: session.id, entryId: entry.id)
                             dismiss()
                         }
                         .buttonStyle(PrimaryButtonStyle())
-
-                        Button("Skip") {
-                            store.skipExercise(sessionId: session.id, entryId: entry.id)
-                            dismiss()
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
                     }
+                    .padding(.top, 12)
                 }
                 .padding()
             }
@@ -334,6 +475,28 @@ struct ExerciseLoggingView: View {
                     value: $numericInput,
                     onSave: saveEditing
                 )
+            }
+            .sheet(isPresented: $isReplaceSheetPresented) {
+                NavigationStack {
+                    ActiveWorkoutMovementPickerView(
+                        mode: .replace,
+                        session: session,
+                        sourceEntry: entry,
+                        onConfirm: { selection in
+                            _ = store.replaceExercise(
+                                sessionId: session.id,
+                                entryId: entry.id,
+                                movementId: selection.movementId,
+                                variationId: selection.variationId,
+                                plannedSetCount: selection.plannedSetCount,
+                                plannedRepRange: selection.plannedRepRange
+                            )
+                            isReplaceSheetPresented = false
+                        }
+                    )
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
         } else {
             ContentUnavailableView("Exercise Not Found", systemImage: "figure.strengthtraining.traditional")
@@ -404,6 +567,14 @@ private func primaryHistory(from history: HistoryResult) -> LabeledHistory {
         return LabeledHistory(title: "Other movement history", snapshot: snapshot)
     }
     return LabeledHistory(title: "Most Relevant", snapshot: nil)
+}
+
+/// Swipe deck has one card per gym; only `exact` (same variation at that gym) should appear on that card.
+private func primaryHistoryForLocationDeck(from history: HistoryResult) -> LabeledHistory {
+    if let snapshot = history.exact {
+        return LabeledHistory(title: "Last at this gym", snapshot: snapshot)
+    }
+    return LabeledHistory(title: "Last at this gym", snapshot: nil)
 }
 
 private struct TargetCard: View {
@@ -694,6 +865,752 @@ private struct AddSetButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
             )
+    }
+}
+
+private struct WorkoutOverviewEntryRow: View {
+    @EnvironmentObject private var store: AppStore
+
+    let session: WorkoutSession
+    let entry: WorkoutExerciseEntry
+    let onDragStarted: (UUID) -> Void
+
+    var body: some View {
+        SurfaceCard {
+            HStack(alignment: .center, spacing: 14) {
+                WorkoutOverviewDragHandle()
+                    .onDrag {
+                        onDragStarted(entry.id)
+                        return NSItemProvider(object: entry.id.uuidString as NSString)
+                    } preview: {
+                        WorkoutOverviewDraggedCardPreview(
+                            entry: entry,
+                            history: store.history(for: session, entry: entry),
+                            pillColor: pillColor
+                        )
+                    }
+
+                NavigationLink {
+                    ExerciseLoggingView(sessionID: session.id, entryID: entry.id)
+                } label: {
+                    WorkoutEntryCardContent(
+                        entry: entry,
+                        history: store.history(for: session, entry: entry),
+                        pillColor: pillColor
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var pillColor: Color {
+        switch entry.status {
+        case .notStarted: return AppTheme.textMuted
+        case .inProgress: return AppTheme.accent
+        case .completed: return AppTheme.accentSecondary
+        case .skipped: return AppTheme.warning
+        }
+    }
+}
+
+private enum WorkoutOverviewRenderItem: Identifiable, Equatable {
+    case entry(WorkoutExerciseEntry)
+    case placeholder(Int)
+
+    var id: String {
+        switch self {
+        case .entry(let entry):
+            return entry.id.uuidString
+        case .placeholder(let index):
+            return "placeholder-\(index)"
+        }
+    }
+}
+
+private enum WorkoutOverviewReorderCoordinateSpace {
+    static let name = "WorkoutOverviewReorderList"
+}
+
+private struct WorkoutOverviewRowFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct WorkoutOverviewDropPlaceholder: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .fill(AppTheme.accent.opacity(0.14))
+            .frame(height: 102)
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(AppTheme.accent.opacity(0.9), style: StrokeStyle(lineWidth: 2, dash: [10, 8]))
+            )
+            .overlay(alignment: .leading) {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.title3.weight(.semibold))
+                    Text("Drop movement here")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(AppTheme.accent)
+                .padding(.horizontal, 18)
+            }
+            .transition(.asymmetric(insertion: .scale(scale: 0.98).combined(with: .opacity), removal: .opacity))
+    }
+}
+
+private struct WorkoutOverviewDraggedCardPreview: View {
+    let entry: WorkoutExerciseEntry
+    let history: HistoryResult
+    let pillColor: Color
+
+    var body: some View {
+        SurfaceCard {
+            HStack(alignment: .center, spacing: 14) {
+                WorkoutOverviewDragHandle()
+
+                WorkoutEntryCardContent(entry: entry, history: history, pillColor: pillColor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .scaleEffect(1.03)
+        .opacity(0.96)
+        .shadow(color: Color.black.opacity(0.28), radius: 20, x: 0, y: 12)
+        .padding(.horizontal, 4)
+    }
+}
+
+private struct WorkoutOverviewReorderDropDelegate: DropDelegate {
+    let sortedEntries: [WorkoutExerciseEntry]
+    let visibleEntries: [WorkoutExerciseEntry]
+    let rowFrames: [UUID: CGRect]
+    @Binding var activeDraggedEntryID: UUID?
+    @Binding var proposedDropIndex: Int?
+    let onCommitMove: (UUID, Int) -> Void
+    let onReset: () -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [UTType.text])
+    }
+
+    func dropEntered(info: DropInfo) {
+        updateDropIndex(with: info.location)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        updateDropIndex(with: info.location)
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        proposedDropIndex = sourceIndex
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let draggedEntryID = activeDraggedEntryID,
+              let sourceIndex else {
+            onReset()
+            return false
+        }
+
+        let visibleDropIndex = resolvedDropIndex(for: info.location)
+        let targetIndex = visibleDropIndex > sourceIndex ? visibleDropIndex + 1 : visibleDropIndex
+        onCommitMove(draggedEntryID, targetIndex)
+        onReset()
+        return true
+    }
+
+    private var sourceIndex: Int? {
+        guard let activeDraggedEntryID else { return nil }
+        return sortedEntries.firstIndex(where: { $0.id == activeDraggedEntryID })
+    }
+
+    private func updateDropIndex(with location: CGPoint) {
+        proposedDropIndex = resolvedDropIndex(for: location)
+    }
+
+    private func resolvedDropIndex(for location: CGPoint) -> Int {
+        guard !visibleEntries.isEmpty else { return 0 }
+
+        for (index, entry) in visibleEntries.enumerated() {
+            guard let frame = rowFrames[entry.id] else { continue }
+            if location.y < frame.midY {
+                return index
+            }
+        }
+
+        return visibleEntries.count
+    }
+}
+
+private struct WorkoutOverviewDragHandle: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            VStack(spacing: 4) {
+                gripDot
+                gripDot
+                gripDot
+            }
+
+            VStack(spacing: 4) {
+                gripDot
+                gripDot
+                gripDot
+            }
+        }
+        .frame(width: 34, height: 34)
+        .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var gripDot: some View {
+        Circle()
+            .fill(AppTheme.textMuted)
+            .frame(width: 4, height: 4)
+    }
+}
+
+private struct ActiveWorkoutMovementPickerView: View {
+    @EnvironmentObject private var store: AppStore
+
+    let mode: ActiveWorkoutMovementPickerMode
+    let session: WorkoutSession
+    let sourceEntry: WorkoutExerciseEntry?
+    let onConfirm: (ActiveWorkoutEntrySelection) -> Void
+
+    @State private var searchText = ""
+    @FocusState private var searchFocused: Bool
+
+    private let groupSections = [
+        WorkoutMuscleGroupSection(title: "Upper Body", groups: [.chest, .upperChest, .lats, .upperBack, .midBack, .traps, .frontDelts, .sideDelts, .rearDelts]),
+        WorkoutMuscleGroupSection(title: "Lower Body", groups: [.quadriceps, .hamstrings, .glutes, .calves, .adductors, .abductors, .spinalErectors]),
+        WorkoutMuscleGroupSection(title: "Arms", groups: [.biceps, .triceps, .forearms]),
+        WorkoutMuscleGroupSection(title: "Other", groups: [.abs])
+    ]
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var searchResults: [Movement] {
+        store.searchMovements(query: searchText)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if isSearching {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Movements")
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.textPrimary)
+
+                        ForEach(searchResults) { movement in
+                            NavigationLink {
+                                ActiveWorkoutMovementDetailView(
+                                    mode: mode,
+                                    session: session,
+                                    sourceEntry: sourceEntry,
+                                    movementId: movement.id,
+                                    onConfirm: onConfirm
+                                )
+                            } label: {
+                                WorkoutMovementSelectionCard(movement: movement, isSelected: false)
+                            }
+                            .buttonStyle(.plain)
+                            .simultaneousGesture(TapGesture().onEnded {
+                                searchFocused = false
+                            })
+                        }
+
+                        if searchResults.isEmpty {
+                            Text("No matching movements.")
+                                .foregroundStyle(AppTheme.textMuted)
+                        }
+                    }
+                } else {
+                    ForEach(groupSections) { section in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(section.title)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(AppTheme.textMuted)
+
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 10)], spacing: 10) {
+                                ForEach(section.groups, id: \.self) { group in
+                                    NavigationLink {
+                                        ActiveWorkoutMovementGroupView(
+                                            mode: mode,
+                                            session: session,
+                                            sourceEntry: sourceEntry,
+                                            group: group,
+                                            searchText: searchText,
+                                            onConfirm: onConfirm
+                                        )
+                                    } label: {
+                                        WorkoutMuscleGroupTile(group: group, count: store.movements(for: group).count, isSelected: false)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding()
+            .padding(.bottom, 78)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(AppTheme.background.ignoresSafeArea())
+        .navigationTitle(mode.navigationTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            WorkoutMovementSearchBar(searchText: $searchText, searchFocused: _searchFocused)
+        }
+    }
+}
+
+private struct ActiveWorkoutMovementGroupView: View {
+    @EnvironmentObject private var store: AppStore
+
+    let mode: ActiveWorkoutMovementPickerMode
+    let session: WorkoutSession
+    let sourceEntry: WorkoutExerciseEntry?
+    let group: MuscleGroup
+    let searchText: String
+    let onConfirm: (ActiveWorkoutEntrySelection) -> Void
+
+    private var movements: [Movement] {
+        store.searchMovements(query: searchText, muscleGroup: group)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                SectionTitle(eyebrow: "Muscle Group", title: group.displayName)
+
+                ForEach(movements) { movement in
+                    NavigationLink {
+                        ActiveWorkoutMovementDetailView(
+                            mode: mode,
+                            session: session,
+                            sourceEntry: sourceEntry,
+                            movementId: movement.id,
+                            onConfirm: onConfirm
+                        )
+                    } label: {
+                        WorkoutMovementSelectionCard(movement: movement, isSelected: false)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 6)
+                }
+
+                if movements.isEmpty {
+                    Text("No matching movements.")
+                        .foregroundStyle(AppTheme.textMuted)
+                }
+            }
+            .padding()
+        }
+        .background(AppTheme.background.ignoresSafeArea())
+        .navigationTitle(group.displayName)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct ActiveWorkoutMovementDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: AppStore
+
+    let mode: ActiveWorkoutMovementPickerMode
+    let session: WorkoutSession
+    let sourceEntry: WorkoutExerciseEntry?
+    let movementId: UUID
+    let onConfirm: (ActiveWorkoutEntrySelection) -> Void
+
+    @State private var selectedVariationId: UUID?
+    @State private var selectedNoVariation = false
+    @State private var plannedSetCount: Int
+    @State private var plannedRepMin: Int
+    @State private var plannedRepMax: Int
+
+    init(
+        mode: ActiveWorkoutMovementPickerMode,
+        session: WorkoutSession,
+        sourceEntry: WorkoutExerciseEntry?,
+        movementId: UUID,
+        onConfirm: @escaping (ActiveWorkoutEntrySelection) -> Void
+    ) {
+        self.mode = mode
+        self.session = session
+        self.sourceEntry = sourceEntry
+        self.movementId = movementId
+        self.onConfirm = onConfirm
+
+        let defaultRepRange = sourceEntry?.plannedRepRange ?? RepRange(min: 8, max: 12)
+        let defaultSetCount = sourceEntry?.plannedSetCount ?? 3
+
+        switch mode {
+        case .replace:
+            _plannedSetCount = State(initialValue: defaultSetCount)
+            _plannedRepMin = State(initialValue: defaultRepRange.min)
+            _plannedRepMax = State(initialValue: defaultRepRange.max)
+        case .add:
+            _plannedSetCount = State(initialValue: 3)
+            _plannedRepMin = State(initialValue: 8)
+            _plannedRepMax = State(initialValue: 12)
+        }
+    }
+
+    private var movement: Movement? {
+        store.movement(for: movementId)
+    }
+
+    private var variations: [Variation] {
+        store.variations(for: movementId)
+    }
+
+    private var canConfirm: Bool {
+        (selectedNoVariation || selectedVariationId != nil || variations.isEmpty) &&
+        plannedSetCount > 0 &&
+        plannedRepMin > 0 &&
+        plannedRepMax >= plannedRepMin
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let movement {
+                    WorkoutMovementSelectionCard(movement: movement, isSelected: false)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Variation")
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.textPrimary)
+
+                        if variations.isEmpty {
+                            Button {
+                                selectedNoVariation = true
+                                selectedVariationId = nil
+                            } label: {
+                                WorkoutVariationSelectionCard(title: "Continue without a variation", subtitle: nil, isSelected: selectedNoVariation)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            ForEach(variations) { variation in
+                                Button {
+                                    selectedVariationId = variation.id
+                                    selectedNoVariation = false
+                                } label: {
+                                    WorkoutVariationSelectionCard(
+                                        title: variation.name,
+                                        subtitle: variation.equipmentCategory?.displayName,
+                                        isSelected: selectedVariationId == variation.id
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    WorkoutTargetPickerCard(
+                        plannedSetCount: $plannedSetCount,
+                        plannedRepMin: $plannedRepMin,
+                        plannedRepMax: $plannedRepMax
+                    )
+
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Applies To")
+                                .font(.headline)
+                                .foregroundStyle(AppTheme.textPrimary)
+                            Text(session.regimenDayNameSnapshot ?? "Workout")
+                                .foregroundStyle(AppTheme.textSecondary)
+                            Text(mode == .replace ? "This replaces the current movement in the active workout only." : "This adds a new movement to the end of the active workout only. You can drag it into place after adding it.")
+                                .foregroundStyle(AppTheme.textMuted)
+                        }
+                    }
+                } else {
+                    ContentUnavailableView("Movement Not Found", systemImage: "figure.strengthtraining.traditional")
+                }
+            }
+            .padding()
+        }
+        .background(AppTheme.background.ignoresSafeArea())
+        .navigationTitle(movement?.canonicalName ?? "Movement")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            guard selectedVariationId == nil, !selectedNoVariation else { return }
+
+            if let sourceEntry,
+               let currentVariationId = sourceEntry.performedMovementId == movementId ? sourceEntry.performedVariationId : nil,
+               variations.contains(where: { $0.id == currentVariationId }) {
+                selectedVariationId = currentVariationId
+            } else {
+                selectedVariationId = variations.first?.id
+                selectedNoVariation = variations.isEmpty
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            Button(mode.confirmButtonTitle) {
+                onConfirm(
+                    ActiveWorkoutEntrySelection(
+                        movementId: movementId,
+                        variationId: selectedNoVariation ? nil : selectedVariationId,
+                        plannedSetCount: plannedSetCount,
+                        plannedRepRange: RepRange(min: plannedRepMin, max: plannedRepMax)
+                    )
+                )
+                dismiss()
+            }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(!canConfirm || movement == nil)
+            .opacity((canConfirm && movement != nil) ? 1 : 0.45)
+            .padding()
+            .background(AppTheme.background)
+        }
+    }
+}
+
+private enum ActiveWorkoutMovementPickerMode {
+    case replace
+    case add
+
+    var navigationTitle: String {
+        switch self {
+        case .replace: return "Replace Movement"
+        case .add: return "Add Movement"
+        }
+    }
+
+    var confirmButtonTitle: String {
+        switch self {
+        case .replace: return "Replace in Workout"
+        case .add: return "Add to Workout"
+        }
+    }
+}
+
+private struct ActiveWorkoutEntrySelection {
+    let movementId: UUID
+    let variationId: UUID?
+    let plannedSetCount: Int
+    let plannedRepRange: RepRange
+}
+
+private struct WorkoutMuscleGroupSection: Identifiable {
+    let title: String
+    let groups: [MuscleGroup]
+
+    var id: String { title }
+}
+
+private struct WorkoutMovementSearchBar: View {
+    @Binding var searchText: String
+    @FocusState var searchFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(AppTheme.textMuted)
+
+                TextField("Search exercises or aliases", text: $searchText)
+                    .focused($searchFocused)
+                    .textInputAutocapitalization(.words)
+                    .submitLabel(.search)
+                    .onSubmit {
+                        searchFocused = false
+                    }
+                    .foregroundStyle(AppTheme.textPrimary)
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 52)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(AppTheme.elevatedSurface)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(searchFocused ? AppTheme.accent.opacity(0.8) : Color.white.opacity(0.06), lineWidth: 1)
+                    )
+            )
+
+            if searchFocused {
+                Button {
+                    searchFocused = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(AppTheme.textPrimary)
+                        .frame(width: 52, height: 52)
+                        .background(AppTheme.elevatedSurface, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss keyboard")
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .animation(.snappy, value: searchFocused)
+    }
+}
+
+private struct WorkoutMuscleGroupTile: View {
+    let group: MuscleGroup
+    let count: Int
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(group.displayName)
+                .font(.headline)
+                .foregroundStyle(AppTheme.textPrimary)
+            Text("\(count) exercises")
+                .font(.caption)
+                .foregroundStyle(AppTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isSelected ? AppTheme.accent.opacity(0.22) : AppTheme.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(isSelected ? AppTheme.accent : Color.white.opacity(0.06), lineWidth: isSelected ? 2 : 1)
+                )
+        )
+    }
+}
+
+private struct WorkoutMovementSelectionCard: View {
+    let movement: Movement
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(movement.canonicalName)
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.textPrimary)
+                    if !movement.aliases.isEmpty {
+                        Text("Aliases: \(movement.aliases.joined(separator: ", "))")
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.textMuted)
+                    }
+                }
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(AppTheme.accent)
+                }
+            }
+
+            WorkoutFlowTagRow(tags: (movement.primaryMuscleGroups + movement.secondaryMuscleGroups).map(\.displayName))
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isSelected ? AppTheme.accent.opacity(0.16) : AppTheme.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(isSelected ? AppTheme.accent : Color.white.opacity(0.06), lineWidth: isSelected ? 2 : 1)
+                )
+        )
+    }
+}
+
+private struct WorkoutVariationSelectionCard: View {
+    let title: String
+    let subtitle: String?
+    let isSelected: Bool
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textPrimary)
+                if let subtitle {
+                    Text(subtitle)
+                        .foregroundStyle(AppTheme.textSecondary)
+                }
+            }
+            Spacer()
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(AppTheme.accent)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isSelected ? AppTheme.accent.opacity(0.16) : AppTheme.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(isSelected ? AppTheme.accent : Color.white.opacity(0.06), lineWidth: isSelected ? 2 : 1)
+                )
+        )
+    }
+}
+
+private struct WorkoutFlowTagRow: View {
+    let tags: [String]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(tags, id: \.self) { tag in
+                    Text(tag)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.accent)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(AppTheme.accent.opacity(0.14), in: Capsule())
+                }
+            }
+        }
+    }
+}
+
+private struct WorkoutTargetPickerCard: View {
+    @Binding var plannedSetCount: Int
+    @Binding var plannedRepMin: Int
+    @Binding var plannedRepMax: Int
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Target")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textPrimary)
+
+                Stepper("Sets: \(plannedSetCount)", value: $plannedSetCount, in: 1...20)
+                    .foregroundStyle(AppTheme.textPrimary)
+
+                Stepper("Minimum reps: \(plannedRepMin)", value: $plannedRepMin, in: 1...100)
+                    .foregroundStyle(AppTheme.textPrimary)
+
+                Stepper("Maximum reps: \(plannedRepMax)", value: $plannedRepMax, in: 1...100)
+                    .foregroundStyle(AppTheme.textPrimary)
+
+                if plannedRepMax < plannedRepMin {
+                    Text("Maximum reps must be at least the minimum.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.warning)
+                } else {
+                    Text("\(plannedSetCount) sets • \(RepRange(min: plannedRepMin, max: plannedRepMax).displayText) reps")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.accentSecondary)
+                }
+            }
+        }
     }
 }
 

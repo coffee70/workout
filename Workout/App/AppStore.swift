@@ -337,6 +337,122 @@ final class AppStore: ObservableObject {
         Haptics.medium()
     }
 
+    @discardableResult
+    func replaceExercise(
+        sessionId: UUID,
+        entryId: UUID,
+        movementId: UUID,
+        variationId: UUID?,
+        plannedSetCount: Int?,
+        plannedRepRange: RepRange?
+    ) -> UUID? {
+        guard let sessionIndex = appData.workoutSessions.firstIndex(where: { $0.id == sessionId }),
+              let entryIndex = appData.workoutSessions[sessionIndex].exerciseEntries.firstIndex(where: { $0.id == entryId }) else { return nil }
+
+        let session = appData.workoutSessions[sessionIndex]
+        let existingEntry = session.exerciseEntries[entryIndex]
+        guard let replacementEntry = makeSessionExerciseEntry(
+            session: session,
+            movementId: movementId,
+            variationId: variationId,
+            plannedSetCount: plannedSetCount,
+            plannedRepRange: plannedRepRange,
+            entryId: existingEntry.id,
+            orderIndex: existingEntry.orderIndex,
+            sourceRegimenItemId: existingEntry.sourceRegimenItemId,
+            notes: existingEntry.notes
+        ) else { return nil }
+
+        appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex] = replacementEntry
+        appData.workoutSessions[sessionIndex].updatedAt = .now
+        touch()
+        Haptics.medium()
+        return replacementEntry.id
+    }
+
+    @discardableResult
+    func insertExerciseAfter(
+        sessionId: UUID,
+        afterEntryId: UUID,
+        movementId: UUID,
+        variationId: UUID?,
+        plannedSetCount: Int?,
+        plannedRepRange: RepRange?
+    ) -> UUID? {
+        guard let sessionIndex = appData.workoutSessions.firstIndex(where: { $0.id == sessionId }),
+              let entryIndex = appData.workoutSessions[sessionIndex].exerciseEntries.firstIndex(where: { $0.id == afterEntryId }) else { return nil }
+
+        let session = appData.workoutSessions[sessionIndex]
+        guard let newEntry = makeSessionExerciseEntry(
+            session: session,
+            movementId: movementId,
+            variationId: variationId,
+            plannedSetCount: plannedSetCount,
+            plannedRepRange: plannedRepRange,
+            entryId: UUID(),
+            orderIndex: entryIndex + 1,
+            sourceRegimenItemId: nil,
+            notes: nil
+        ) else { return nil }
+
+        appData.workoutSessions[sessionIndex].exerciseEntries.insert(newEntry, at: entryIndex + 1)
+        reindexEntries(in: sessionIndex)
+        appData.workoutSessions[sessionIndex].updatedAt = .now
+        touch()
+        Haptics.light()
+        return newEntry.id
+    }
+
+    @discardableResult
+    func appendExercise(
+        sessionId: UUID,
+        movementId: UUID,
+        variationId: UUID?,
+        plannedSetCount: Int?,
+        plannedRepRange: RepRange?
+    ) -> UUID? {
+        guard let sessionIndex = appData.workoutSessions.firstIndex(where: { $0.id == sessionId }) else { return nil }
+
+        let session = appData.workoutSessions[sessionIndex]
+        guard let newEntry = makeSessionExerciseEntry(
+            session: session,
+            movementId: movementId,
+            variationId: variationId,
+            plannedSetCount: plannedSetCount,
+            plannedRepRange: plannedRepRange,
+            entryId: UUID(),
+            orderIndex: session.exerciseEntries.count,
+            sourceRegimenItemId: nil,
+            notes: nil
+        ) else { return nil }
+
+        appData.workoutSessions[sessionIndex].exerciseEntries.append(newEntry)
+        reindexEntries(in: sessionIndex)
+        appData.workoutSessions[sessionIndex].updatedAt = .now
+        touch()
+        Haptics.light()
+        return newEntry.id
+    }
+
+    func moveExercise(sessionId: UUID, entryId: UUID, toIndex: Int) {
+        guard let sessionIndex = appData.workoutSessions.firstIndex(where: { $0.id == sessionId }),
+              let sourceIndex = appData.workoutSessions[sessionIndex].exerciseEntries.firstIndex(where: { $0.id == entryId }) else { return }
+
+        let maxIndex = appData.workoutSessions[sessionIndex].exerciseEntries.count
+        let clampedIndex = max(0, min(toIndex, maxIndex))
+        guard sourceIndex != clampedIndex else { return }
+
+        var entries = appData.workoutSessions[sessionIndex].exerciseEntries
+        let movedEntry = entries.remove(at: sourceIndex)
+        let adjustedIndex = sourceIndex < clampedIndex ? clampedIndex - 1 : clampedIndex
+        entries.insert(movedEntry, at: max(0, min(adjustedIndex, entries.count)))
+        appData.workoutSessions[sessionIndex].exerciseEntries = entries
+        reindexEntries(in: sessionIndex)
+        appData.workoutSessions[sessionIndex].updatedAt = .now
+        touch()
+        Haptics.light()
+    }
+
     func upsertMovement(
         id: UUID? = nil,
         canonicalName: String,
@@ -537,6 +653,48 @@ final class AppStore: ObservableObject {
         mutate(&appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex])
         appData.workoutSessions[sessionIndex].updatedAt = .now
         touch()
+    }
+
+    private func makeSessionExerciseEntry(
+        session: WorkoutSession,
+        movementId: UUID,
+        variationId: UUID?,
+        plannedSetCount: Int?,
+        plannedRepRange: RepRange?,
+        entryId: UUID,
+        orderIndex: Int,
+        sourceRegimenItemId: UUID?,
+        notes: String?
+    ) -> WorkoutExerciseEntry? {
+        guard let movement = movement(for: movementId) else { return nil }
+        let variation = appData.variations.first(where: { $0.id == variationId })
+
+        return WorkoutExerciseEntry(
+            id: entryId,
+            orderIndex: orderIndex,
+            sourceRegimenItemId: sourceRegimenItemId,
+            plannedMovementId: movement.id,
+            plannedMovementNameSnapshot: movement.canonicalName,
+            plannedVariationId: variation?.id,
+            plannedVariationNameSnapshot: variation?.name,
+            plannedSetCount: plannedSetCount,
+            plannedRepRange: plannedRepRange,
+            performedMovementId: movement.id,
+            performedMovementNameSnapshot: movement.canonicalName,
+            performedVariationId: variation?.id ?? UUID(),
+            performedVariationNameSnapshot: variation?.name ?? "Select Variation",
+            status: .notStarted,
+            viewedHistoryLocationId: session.locationId,
+            viewedHistoryLocationNameSnapshot: session.locationNameSnapshot,
+            sets: [],
+            notes: notes
+        )
+    }
+
+    private func reindexEntries(in sessionIndex: Int) {
+        for index in appData.workoutSessions[sessionIndex].exerciseEntries.indices {
+            appData.workoutSessions[sessionIndex].exerciseEntries[index].orderIndex = index
+        }
     }
 
     private func workoutEntry(sessionId: UUID, entryId: UUID) -> WorkoutExerciseEntry? {

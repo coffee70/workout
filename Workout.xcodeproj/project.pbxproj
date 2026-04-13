@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		5253D3512F844261009FC577 /* Workout.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Workout.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5253D3612F844261009FC577 /* TargetSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = TargetSigning.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -33,6 +34,7 @@
 			isa = PBXGroup;
 			children = (
 				5253D3532F844261009FC577 /* Workout */,
+				5253D3612F844261009FC577 /* TargetSigning.xcconfig */,
 				5253D3522F844261009FC577 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -246,12 +248,12 @@
 		};
 		5253D35D2F844268009FC577 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5253D3612F844261009FC577 /* TargetSigning.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 3Z97SQ2PTA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -278,12 +280,12 @@
 		};
 		5253D35E2F844268009FC577 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5253D3612F844261009FC577 /* TargetSigning.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 3Z97SQ2PTA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

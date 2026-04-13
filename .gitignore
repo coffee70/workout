@@ -1,0 +1,2 @@
+# Per-machine signing (copy from LocalSigning.xcconfig.example); overrides DEVELOPMENT_TEAM in TargetSigning.xcconfig
+LocalSigning.xcconfig

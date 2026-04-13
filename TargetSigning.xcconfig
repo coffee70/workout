@@ -1,0 +1,4 @@
+// Base signing for the Workout target. Optional: add LocalSigning.xcconfig (see LocalSigning.xcconfig.example)
+// in the project root to override DEVELOPMENT_TEAM without editing the project file.
+DEVELOPMENT_TEAM = 3Z97SQ2PTA
+#include? "LocalSigning.xcconfig"
