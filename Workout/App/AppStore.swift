@@ -641,10 +641,24 @@ final class AppStore: ObservableObject {
         guard let regimenIndex = appData.regimens.firstIndex(where: { $0.id == regimenId }),
               let dayIndex = appData.regimens[regimenIndex].days.firstIndex(where: { $0.id == dayId }),
               let itemIndex = appData.regimens[regimenIndex].days[dayIndex].items.firstIndex(where: { $0.id == itemId }) else { return }
+
+        let oldItem = appData.regimens[regimenIndex].days[dayIndex].items[itemIndex]
+        let oldResolvedVariation = WorkoutSessionFactory.resolvedVariation(for: oldItem, variations: appData.variations)
+
         appData.regimens[regimenIndex].days[dayIndex].items[itemIndex].defaultVariationId = defaultVariationId
         appData.regimens[regimenIndex].days[dayIndex].items[itemIndex].plannedSetCount = plannedSetCount
         appData.regimens[regimenIndex].days[dayIndex].items[itemIndex].plannedRepRange = plannedRepRange
         appData.regimens[regimenIndex].days[dayIndex].items[itemIndex].notes = notes?.nilIfBlank
+
+        let newItem = appData.regimens[regimenIndex].days[dayIndex].items[itemIndex]
+        let newResolvedVariation = WorkoutSessionFactory.resolvedVariation(for: newItem, variations: appData.variations)
+        syncActiveWorkoutEntriesFromRegimenItem(
+            itemId: itemId,
+            newItem: newItem,
+            oldResolvedVariation: oldResolvedVariation,
+            newResolvedVariation: newResolvedVariation
+        )
+
         appData.regimens[regimenIndex].updatedAt = .now
         touch()
     }
@@ -665,6 +679,39 @@ final class AppStore: ObservableObject {
             Haptics.success()
         } catch {
             errorMessage = "Import failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func syncActiveWorkoutEntriesFromRegimenItem(
+        itemId: UUID,
+        newItem: RegimenItem,
+        oldResolvedVariation: Variation?,
+        newResolvedVariation: Variation?
+    ) {
+        let now = Date()
+        for sessionIndex in appData.workoutSessions.indices {
+            guard appData.workoutSessions[sessionIndex].status == .active else { continue }
+            var sessionUpdated = false
+            for entryIndex in appData.workoutSessions[sessionIndex].exerciseEntries.indices {
+                guard appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].sourceRegimenItemId == itemId else { continue }
+                sessionUpdated = true
+                appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].plannedSetCount = newItem.plannedSetCount
+                appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].plannedRepRange = newItem.plannedRepRange
+                appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].notes = newItem.notes
+                appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].plannedVariationId = newItem.defaultVariationId
+                appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].plannedVariationNameSnapshot = newResolvedVariation?.name
+
+                if let oldResolvedVariation, let newResolvedVariation,
+                   appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].performedVariationId == oldResolvedVariation.id {
+                    appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].performedVariationId = newResolvedVariation.id
+                    appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].performedVariationNameSnapshot = newResolvedVariation.name
+                    appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].performedMovementId = newResolvedVariation.movementId
+                    appData.workoutSessions[sessionIndex].exerciseEntries[entryIndex].performedMovementNameSnapshot = movementName(newResolvedVariation.movementId)
+                }
+            }
+            if sessionUpdated {
+                appData.workoutSessions[sessionIndex].updatedAt = now
+            }
         }
     }
 

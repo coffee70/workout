@@ -1,10 +1,16 @@
 import Foundation
 
 struct WorkoutSessionFactory {
+    /// Explicit default variation if set, otherwise first non-archived variation for the movement.
+    static func resolvedVariation(for item: RegimenItem, variations: [Variation]) -> Variation? {
+        variations.first(where: { $0.id == item.defaultVariationId })
+            ?? variations.first(where: { $0.movementId == item.movementId && !$0.isArchived })
+    }
+
     func makeSession(regimen: Regimen?, day: RegimenDay, location: Location, movements: [Movement], variations: [Variation], now: Date = .now) -> WorkoutSession {
         let entries = day.items.sorted { $0.orderIndex < $1.orderIndex }.map { item in
             let movement = movements.first(where: { $0.id == item.movementId })
-            let variation = variations.first(where: { $0.id == item.defaultVariationId }) ?? variations.first(where: { $0.movementId == item.movementId && !$0.isArchived })
+            let variation = Self.resolvedVariation(for: item, variations: variations)
             return WorkoutExerciseEntry(
                 id: UUID(),
                 orderIndex: item.orderIndex,
