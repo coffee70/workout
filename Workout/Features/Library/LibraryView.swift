@@ -105,27 +105,30 @@ struct MovementListView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if isSearching {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Movements")
-                            .font(.headline)
-                            .foregroundStyle(AppTheme.textPrimary)
+                    if searchResults.isEmpty {
+                        ContentUnavailableView(
+                            "No Matching Movements",
+                            systemImage: "magnifyingglass",
+                            description: Text("Try a different search term, or clear the search field to browse by muscle group.")
+                        )
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Movements")
+                                .font(.headline)
+                                .foregroundStyle(AppTheme.textPrimary)
 
-                        ForEach(searchResults) { movement in
-                            NavigationLink {
-                                MovementDetailView(movementId: movement.id)
-                            } label: {
-                                MovementSelectionCard(movement: movement, isSelected: false)
+                            ForEach(searchResults) { movement in
+                                NavigationLink {
+                                    MovementDetailView(movementId: movement.id)
+                                } label: {
+                                    MovementSelectionCard(movement: movement, isSelected: false)
+                                }
+                                .buttonStyle(.plain)
+                                .simultaneousGesture(TapGesture().onEnded {
+                                    searchFocused = false
+                                })
+                                .padding(.bottom, 6)
                             }
-                            .buttonStyle(.plain)
-                            .simultaneousGesture(TapGesture().onEnded {
-                                searchFocused = false
-                            })
-                            .padding(.bottom, 6)
-                        }
-
-                        if searchResults.isEmpty {
-                            Text("No matching movements.")
-                                .foregroundStyle(AppTheme.textMuted)
                         }
                     }
                 } else {
@@ -148,6 +151,7 @@ struct MovementListView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
             .padding(.bottom, 78)
         }

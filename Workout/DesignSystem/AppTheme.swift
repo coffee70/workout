@@ -66,6 +66,30 @@ struct SecondaryButtonStyle: ButtonStyle {
     }
 }
 
+struct DestructiveSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .foregroundStyle(AppTheme.danger)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 18)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(AppTheme.elevatedSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.black.opacity(configuration.isPressed ? 0.14 : 0))
+                    )
+                    .opacity(configuration.isPressed ? 0.88 : 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(AppTheme.danger.opacity(configuration.isPressed ? 0.72 : 0.58), lineWidth: 1.5)
+            )
+            .scaleEffect(configuration.isPressed ? 0.99 : 1)
+    }
+}
+
 struct StatusPill: View {
     let title: String
     let color: Color

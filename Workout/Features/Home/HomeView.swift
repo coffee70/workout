@@ -62,21 +62,6 @@ struct HomeView: View {
                         }
                     }
                 }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Recent Sessions")
-                        .font(.headline)
-                        .foregroundStyle(AppTheme.textSecondary)
-                    ForEach(Array(store.recentSessions.prefix(5))) { session in
-                        SwipeToDeleteSessionCard {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                store.deleteWorkoutSession(session.id)
-                            }
-                        } content: {
-                            RecentSessionCard(session: session)
-                        }
-                    }
-                }
             }
             .padding()
         }
@@ -88,92 +73,6 @@ struct HomeView: View {
             }
             .environmentObject(store)
         }
-    }
-}
-
-private struct RecentSessionCard: View {
-    let session: WorkoutSession
-
-    var body: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(session.regimenDayNameSnapshot ?? "Workout")
-                    .font(.headline)
-                    .foregroundStyle(AppTheme.textPrimary)
-                Text(session.locationNameSnapshot)
-                    .foregroundStyle(AppTheme.textSecondary)
-                Text(session.date.formatted(date: .abbreviated, time: .shortened))
-                    .foregroundStyle(AppTheme.textMuted)
-            }
-        }
-    }
-}
-
-private struct SwipeToDeleteSessionCard<Content: View>: View {
-    let onDelete: () -> Void
-    let content: Content
-
-    @State private var offsetX: CGFloat = 0
-    @State private var dragStartOffset: CGFloat = 0
-    @State private var isDragging = false
-
-    private let revealWidth: CGFloat = 86
-    private let deleteButtonSize: CGFloat = 52
-
-    init(onDelete: @escaping () -> Void, @ViewBuilder content: () -> Content) {
-        self.onDelete = onDelete
-        self.content = content()
-    }
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            HStack {
-                Spacer()
-                Button(role: .destructive) {
-                    withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                        offsetX = 0
-                    }
-                    onDelete()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: deleteButtonSize, height: deleteButtonSize)
-                        .background(
-                            Circle()
-                                .fill(AppTheme.danger)
-                        )
-                }
-                .buttonStyle(.plain)
-                .padding(.trailing, 14)
-                .accessibilityLabel("Delete Workout Session")
-            }
-
-            content
-                .offset(x: offsetX)
-                .contentShape(Rectangle())
-                .allowsHitTesting(offsetX == 0)
-                .gesture(
-                    DragGesture(minimumDistance: 12)
-                        .onChanged { gesture in
-                            if !isDragging {
-                                dragStartOffset = offsetX
-                                isDragging = true
-                            }
-                            offsetX = min(max(dragStartOffset + gesture.translation.width, -revealWidth), 0)
-                        }
-                        .onEnded { gesture in
-                            let projectedOffset = min(max(dragStartOffset + gesture.translation.width, -revealWidth), 0)
-                            let shouldReveal = projectedOffset < -(revealWidth * 0.45)
-                            withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                                offsetX = shouldReveal ? -revealWidth : 0
-                            }
-                            dragStartOffset = offsetX
-                            isDragging = false
-                        }
-                )
-        }
-        .clipped()
     }
 }
 

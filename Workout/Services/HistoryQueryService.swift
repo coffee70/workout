@@ -16,7 +16,7 @@ struct HistoryQueryService {
     ) -> HistoryResult {
         let snapshots = sessions
             .filter { $0.id != sessionId }
-            .filter { $0.status == .completed || $0.status == .active }
+            .filter { $0.status == .completed }
             .flatMap { session in
                 session.exerciseEntries.compactMap { entry -> HistorySnapshot? in
                     guard !entry.sets.isEmpty else { return nil }

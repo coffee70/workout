@@ -37,6 +37,7 @@ struct WorkoutChecklistView: View {
     let session: WorkoutSession
 
     @State private var isAddMovementPresented = false
+    @State private var showDiscardWorkoutConfirmation = false
     @State private var activeDraggedEntryID: UUID?
     @State private var proposedDropIndex: Int?
     @State private var rowFrames: [UUID: CGRect] = [:]
@@ -96,7 +97,6 @@ struct WorkoutChecklistView: View {
                                     beginReorder(for: draggedEntryID)
                                 }
                             )
-                            .environmentObject(store)
                             .background(
                                 GeometryReader { proxy in
                                     Color.clear.preference(
@@ -135,15 +135,36 @@ struct WorkoutChecklistView: View {
                 }
                 .buttonStyle(SecondaryButtonStyle())
 
-                Button("Finish Workout") {
-                    store.finishWorkout(sessionId: session.id)
+                HStack(spacing: 12) {
+                    Button("Finish Workout") {
+                        store.finishWorkout(sessionId: session.id)
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .frame(maxWidth: .infinity)
+
+                    Button("Cancel Workout") {
+                        showDiscardWorkoutConfirmation = true
+                    }
+                    .buttonStyle(DestructiveSecondaryButtonStyle())
+                    .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(PrimaryButtonStyle())
             }
             .padding()
         }
         .background(AppTheme.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(
+            "Discard this workout?",
+            isPresented: $showDiscardWorkoutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Workout", role: .destructive) {
+                store.discardActiveWorkout(sessionId: session.id)
+            }
+            Button("Keep Workout", role: .cancel) {}
+        } message: {
+            Text("Nothing will be saved and this session will not appear in History.")
+        }
         .sheet(isPresented: $isAddMovementPresented) {
             NavigationStack {
                 ActiveWorkoutMovementPickerView(
@@ -181,17 +202,11 @@ struct WorkoutChecklistView: View {
 }
 
 struct WorkoutEntryCard: View {
-    @EnvironmentObject private var store: AppStore
-    let session: WorkoutSession
     let entry: WorkoutExerciseEntry
-
-    var history: HistoryResult {
-        store.history(for: session, entry: entry)
-    }
 
     var body: some View {
         SurfaceCard {
-            WorkoutEntryCardContent(entry: entry, history: history, pillColor: pillColor)
+            WorkoutEntryCardContent(entry: entry, pillColor: pillColor)
         }
     }
 
@@ -207,38 +222,22 @@ struct WorkoutEntryCard: View {
 
 private struct WorkoutEntryCardContent: View {
     let entry: WorkoutExerciseEntry
-    let history: HistoryResult
     let pillColor: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(entry.performedMovementNameSnapshot)
-                        .font(.title3.bold())
-                        .foregroundStyle(AppTheme.textPrimary)
-                    Text(entry.performedVariationNameSnapshot)
-                        .foregroundStyle(AppTheme.textSecondary)
-                    Text("Target: \(entry.targetSummary)")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AppTheme.accentSecondary)
-                }
-                Spacer()
-                StatusPill(title: entry.status.displayName, color: pillColor)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(entry.performedMovementNameSnapshot)
+                    .font(.title3.bold())
+                    .foregroundStyle(AppTheme.textPrimary)
+                Text(entry.performedVariationNameSnapshot)
+                    .foregroundStyle(AppTheme.textSecondary)
+                Text("Target: \(entry.targetSummary)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.accentSecondary)
             }
-
-            let primary = primaryHistory(from: history)
-            if let snapshot = primary.snapshot {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(primary.title)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(AppTheme.accent)
-                    Text(snapshot.variationName)
-                        .foregroundStyle(AppTheme.textPrimary)
-                    Text("\(snapshot.locationName) • \(snapshot.summary)")
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
-            }
+            Spacer()
+            StatusPill(title: entry.status.displayName, color: pillColor)
         }
     }
 }
@@ -370,54 +369,78 @@ struct ExerciseLoggingView: View {
 
                         ForEach(entry.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
                             SurfaceCard {
-                                HStack(spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text("Set \(set.setNumber)")
-                                            .font(.headline)
-                                            .foregroundStyle(AppTheme.textPrimary)
-                                        Text(set.weightUnit.displayName)
-                                            .foregroundStyle(AppTheme.textMuted)
-                                    }
-                                    LargeMetricButton(
-                                        value: set.weight,
-                                        label: "Weight",
-                                        configuration: .weight
-                                    ) {
-                                        startEditing(setId: set.id, field: .weight, initialValue: set.formattedWeight)
-                                    } onScrubActiveChange: { isActive in
-                                        isScrubbingMetric = isActive
-                                    } onValueChange: { updatedWeight in
-                                        store.updateSet(sessionId: session.id, entryId: entry.id, setId: set.id, weight: updatedWeight)
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    LargeMetricButton(
-                                        value: Double(set.reps),
-                                        label: "Reps",
-                                        configuration: .reps
-                                    ) {
-                                        startEditing(setId: set.id, field: .reps, initialValue: "\(set.reps)")
-                                    } onScrubActiveChange: { isActive in
-                                        isScrubbingMetric = isActive
-                                    } onValueChange: { updatedReps in
-                                        store.updateSet(sessionId: session.id, entryId: entry.id, setId: set.id, reps: Int(updatedReps))
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    Button(role: .destructive) {
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            store.deleteSet(sessionId: session.id, entryId: entry.id, setId: set.id)
+                                VStack(alignment: .leading, spacing: 14) {
+                                    HStack(spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text("Set \(set.setNumber)")
+                                                .font(.headline)
+                                                .foregroundStyle(AppTheme.textPrimary)
+                                            Text(set.weightUnit.displayName)
+                                                .foregroundStyle(AppTheme.textMuted)
                                         }
-                                    } label: {
-                                        Image(systemName: "trash")
-                                            .font(.headline.weight(.semibold))
-                                            .foregroundStyle(AppTheme.danger)
-                                            .frame(width: 36, height: 36)
-                                            .background(
-                                                Circle()
-                                                    .fill(AppTheme.danger.opacity(0.18))
-                                            )
+                                        LargeMetricButton(
+                                            value: set.weight,
+                                            label: "Weight",
+                                            configuration: .weight
+                                        ) {
+                                            startEditing(setId: set.id, field: .weight, initialValue: set.formattedWeight)
+                                        } onScrubActiveChange: { isActive in
+                                            isScrubbingMetric = isActive
+                                        } onValueChange: { updatedWeight in
+                                            store.updateSet(sessionId: session.id, entryId: entry.id, setId: set.id, weight: updatedWeight)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        LargeMetricButton(
+                                            value: Double(set.reps),
+                                            label: "Reps",
+                                            configuration: .reps
+                                        ) {
+                                            startEditing(setId: set.id, field: .reps, initialValue: "\(set.reps)")
+                                        } onScrubActiveChange: { isActive in
+                                            isScrubbingMetric = isActive
+                                        } onValueChange: { updatedReps in
+                                            store.updateSet(sessionId: session.id, entryId: entry.id, setId: set.id, reps: Int(updatedReps))
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        Button(role: .destructive) {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                store.deleteSet(sessionId: session.id, entryId: entry.id, setId: set.id)
+                                            }
+                                        } label: {
+                                            Image(systemName: "trash")
+                                                .font(.headline.weight(.semibold))
+                                                .foregroundStyle(AppTheme.danger)
+                                                .frame(width: 36, height: 36)
+                                                .background(
+                                                    Circle()
+                                                        .fill(AppTheme.danger.opacity(0.18))
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("Delete Set \(set.setNumber)")
                                     }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel("Delete Set \(set.setNumber)")
+                                    SetRecordingFlagsRow(
+                                        isOverloaded: set.usedMachineOverload,
+                                        isPerSide: set.perSide,
+                                        onToggleOverloaded: {
+                                            Haptics.light()
+                                            store.updateSet(
+                                                sessionId: session.id,
+                                                entryId: entry.id,
+                                                setId: set.id,
+                                                usedMachineOverload: !set.usedMachineOverload
+                                            )
+                                        },
+                                        onTogglePerSide: {
+                                            Haptics.light()
+                                            store.updateSet(
+                                                sessionId: session.id,
+                                                entryId: entry.id,
+                                                setId: set.id,
+                                                perSide: !set.perSide
+                                            )
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -556,19 +579,6 @@ private func orderedIDs(
     return merged
 }
 
-private func primaryHistory(from history: HistoryResult) -> LabeledHistory {
-    if let snapshot = history.exact {
-        return LabeledHistory(title: "Last at this gym", snapshot: snapshot)
-    }
-    if let snapshot = history.variationAnywhere {
-        return LabeledHistory(title: "Last with this variation", snapshot: snapshot)
-    }
-    if let snapshot = history.movementMatches.first {
-        return LabeledHistory(title: "Other movement history", snapshot: snapshot)
-    }
-    return LabeledHistory(title: "Most Relevant", snapshot: nil)
-}
-
 /// Swipe deck has one card per gym; only `exact` (same variation at that gym) should appear on that card.
 private func primaryHistoryForLocationDeck(from history: HistoryResult) -> LabeledHistory {
     if let snapshot = history.exact {
@@ -646,6 +656,52 @@ private struct HistoryCard: View {
                     .foregroundStyle(AppTheme.textPrimary)
             }
         }
+    }
+}
+
+private struct SetRecordingFlagsRow: View {
+    let isOverloaded: Bool
+    let isPerSide: Bool
+    let onToggleOverloaded: () -> Void
+    let onTogglePerSide: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            flagButton(title: "Overloaded", isActive: isOverloaded, action: onToggleOverloaded)
+            flagButton(title: "Per Side", isActive: isPerSide, action: onTogglePerSide)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func flagButton(title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(isActive ? AppTheme.accent : AppTheme.textMuted)
+                    .frame(width: 28, alignment: .center)
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textPrimary)
+                    .multilineTextAlignment(.leading)
+            }
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .padding(.horizontal, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(AppTheme.elevatedSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(
+                        isActive ? AppTheme.accent.opacity(0.55) : Color.white.opacity(0.06),
+                        lineWidth: isActive ? 2 : 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(isActive ? "On" : "Off")
     }
 }
 
@@ -869,8 +925,6 @@ private struct AddSetButtonStyle: ButtonStyle {
 }
 
 private struct WorkoutOverviewEntryRow: View {
-    @EnvironmentObject private var store: AppStore
-
     let session: WorkoutSession
     let entry: WorkoutExerciseEntry
     let onDragStarted: (UUID) -> Void
@@ -885,7 +939,6 @@ private struct WorkoutOverviewEntryRow: View {
                     } preview: {
                         WorkoutOverviewDraggedCardPreview(
                             entry: entry,
-                            history: store.history(for: session, entry: entry),
                             pillColor: pillColor
                         )
                     }
@@ -895,7 +948,6 @@ private struct WorkoutOverviewEntryRow: View {
                 } label: {
                     WorkoutEntryCardContent(
                         entry: entry,
-                        history: store.history(for: session, entry: entry),
                         pillColor: pillColor
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -967,7 +1019,6 @@ private struct WorkoutOverviewDropPlaceholder: View {
 
 private struct WorkoutOverviewDraggedCardPreview: View {
     let entry: WorkoutExerciseEntry
-    let history: HistoryResult
     let pillColor: Color
 
     var body: some View {
@@ -975,7 +1026,7 @@ private struct WorkoutOverviewDraggedCardPreview: View {
             HStack(alignment: .center, spacing: 14) {
                 WorkoutOverviewDragHandle()
 
-                WorkoutEntryCardContent(entry: entry, history: history, pillColor: pillColor)
+                WorkoutEntryCardContent(entry: entry, pillColor: pillColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -1105,32 +1156,35 @@ private struct ActiveWorkoutMovementPickerView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if isSearching {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Movements")
-                            .font(.headline)
-                            .foregroundStyle(AppTheme.textPrimary)
+                    if searchResults.isEmpty {
+                        ContentUnavailableView(
+                            "No Matching Movements",
+                            systemImage: "magnifyingglass",
+                            description: Text("Try a different search term, or clear the search field to browse by muscle group.")
+                        )
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Movements")
+                                .font(.headline)
+                                .foregroundStyle(AppTheme.textPrimary)
 
-                        ForEach(searchResults) { movement in
-                            NavigationLink {
-                                ActiveWorkoutMovementDetailView(
-                                    mode: mode,
-                                    session: session,
-                                    sourceEntry: sourceEntry,
-                                    movementId: movement.id,
-                                    onConfirm: onConfirm
-                                )
-                            } label: {
-                                WorkoutMovementSelectionCard(movement: movement, isSelected: false)
+                            ForEach(searchResults) { movement in
+                                NavigationLink {
+                                    ActiveWorkoutMovementDetailView(
+                                        mode: mode,
+                                        session: session,
+                                        sourceEntry: sourceEntry,
+                                        movementId: movement.id,
+                                        onConfirm: onConfirm
+                                    )
+                                } label: {
+                                    WorkoutMovementSelectionCard(movement: movement, isSelected: false)
+                                }
+                                .buttonStyle(.plain)
+                                .simultaneousGesture(TapGesture().onEnded {
+                                    searchFocused = false
+                                })
                             }
-                            .buttonStyle(.plain)
-                            .simultaneousGesture(TapGesture().onEnded {
-                                searchFocused = false
-                            })
-                        }
-
-                        if searchResults.isEmpty {
-                            Text("No matching movements.")
-                                .foregroundStyle(AppTheme.textMuted)
                         }
                     }
                 } else {
@@ -1161,6 +1215,7 @@ private struct ActiveWorkoutMovementPickerView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
             .padding(.bottom, 78)
         }

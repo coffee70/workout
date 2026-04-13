@@ -280,8 +280,85 @@ nonisolated struct SetEntry: Codable, Identifiable, Hashable {
     var rpe: Double?
     var note: String?
     var completed: Bool
+    /// Fractional stack / micro-load pin used.
+    var usedMachineOverload: Bool
+    /// Logged weight is per side (e.g. each dumbbell) when true.
+    var perSide: Bool
     var createdAt: Date
     var updatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id, setNumber, reps, weight, weightUnit, rpe, note, completed
+        case usedMachineOverload, perSide
+        case weightScope
+        case createdAt, updatedAt
+    }
+
+    init(
+        id: UUID,
+        setNumber: Int,
+        reps: Int,
+        weight: Double,
+        weightUnit: WeightUnit,
+        rpe: Double?,
+        note: String?,
+        completed: Bool,
+        usedMachineOverload: Bool = false,
+        perSide: Bool = false,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.setNumber = setNumber
+        self.reps = reps
+        self.weight = weight
+        self.weightUnit = weightUnit
+        self.rpe = rpe
+        self.note = note
+        self.completed = completed
+        self.usedMachineOverload = usedMachineOverload
+        self.perSide = perSide
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        setNumber = try c.decode(Int.self, forKey: .setNumber)
+        reps = try c.decode(Int.self, forKey: .reps)
+        weight = try c.decode(Double.self, forKey: .weight)
+        weightUnit = try c.decode(WeightUnit.self, forKey: .weightUnit)
+        rpe = try c.decodeIfPresent(Double.self, forKey: .rpe)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+        completed = try c.decode(Bool.self, forKey: .completed)
+        usedMachineOverload = try c.decodeIfPresent(Bool.self, forKey: .usedMachineOverload) ?? false
+        if let decoded = try c.decodeIfPresent(Bool.self, forKey: .perSide) {
+            perSide = decoded
+        } else if let legacy = try c.decodeIfPresent(String.self, forKey: .weightScope) {
+            perSide = legacy == "perSide"
+        } else {
+            perSide = false
+        }
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(setNumber, forKey: .setNumber)
+        try c.encode(reps, forKey: .reps)
+        try c.encode(weight, forKey: .weight)
+        try c.encode(weightUnit, forKey: .weightUnit)
+        try c.encodeIfPresent(rpe, forKey: .rpe)
+        try c.encodeIfPresent(note, forKey: .note)
+        try c.encode(completed, forKey: .completed)
+        try c.encode(usedMachineOverload, forKey: .usedMachineOverload)
+        try c.encode(perSide, forKey: .perSide)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(updatedAt, forKey: .updatedAt)
+    }
 }
 
 nonisolated enum WeightUnit: String, Codable, CaseIterable, Hashable {
@@ -311,7 +388,7 @@ nonisolated struct HistorySnapshot: Identifiable, Hashable {
 
     var summary: String {
         let renderedSets = sets.sorted { $0.setNumber < $1.setNumber }.prefix(3).map {
-            "\($0.formattedWeight) x \($0.reps)"
+            "\($0.formattedWeight) x \($0.reps)\($0.historyFlagSuffix)"
         }
         return renderedSets.joined(separator: " • ")
     }
@@ -323,6 +400,15 @@ extension SetEntry {
             return String(Int(weight))
         }
         return String(format: "%.1f", weight)
+    }
+
+    /// Suffix for history strings when overload or per-side flags are set (empty if neither).
+    nonisolated var historyFlagSuffix: String {
+        var parts: [String] = []
+        if usedMachineOverload { parts.append("Overloaded") }
+        if perSide { parts.append("Per Side") }
+        guard !parts.isEmpty else { return "" }
+        return " · " + parts.joined(separator: " · ")
     }
 }
 

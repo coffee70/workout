@@ -5,7 +5,7 @@ struct HistoryView: View {
 
     var body: some View {
         List {
-            ForEach(store.recentSessions.filter { $0.status == .completed || $0.status == .active }) { session in
+            ForEach(store.recentSessions.filter { $0.status == .completed }) { session in
                 NavigationLink {
                     HistoryDetailView(sessionID: session.id)
                 } label: {
@@ -78,7 +78,7 @@ private struct HistoryDetailView: View {
                                 Text(entry.performedVariationNameSnapshot)
                                     .foregroundStyle(AppTheme.textSecondary)
                                 ForEach(entry.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
-                                    Text("Set \(set.setNumber): \(set.formattedWeight) \(set.weightUnit.displayName) x \(set.reps)")
+                                    Text("Set \(set.setNumber): \(set.formattedWeight) \(set.weightUnit.displayName) x \(set.reps)\(set.historyFlagSuffix)")
                                         .foregroundStyle(AppTheme.textPrimary)
                                 }
                             }

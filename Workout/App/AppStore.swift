@@ -278,6 +278,8 @@ final class AppStore: ObservableObject {
                     rpe: previous?.rpe,
                     note: previous?.note,
                     completed: true,
+                    usedMachineOverload: previous?.usedMachineOverload ?? false,
+                    perSide: previous?.perSide ?? false,
                     createdAt: now,
                     updatedAt: now
                 )
@@ -287,7 +289,15 @@ final class AppStore: ObservableObject {
         Haptics.light()
     }
 
-    func updateSet(sessionId: UUID, entryId: UUID, setId: UUID, reps: Int? = nil, weight: Double? = nil) {
+    func updateSet(
+        sessionId: UUID,
+        entryId: UUID,
+        setId: UUID,
+        reps: Int? = nil,
+        weight: Double? = nil,
+        usedMachineOverload: Bool? = nil,
+        perSide: Bool? = nil
+    ) {
         mutateEntry(sessionId: sessionId, entryId: entryId) { entry in
             guard let index = entry.sets.firstIndex(where: { $0.id == setId }) else { return }
             if let reps {
@@ -295,6 +305,12 @@ final class AppStore: ObservableObject {
             }
             if let weight {
                 entry.sets[index].weight = weight
+            }
+            if let usedMachineOverload {
+                entry.sets[index].usedMachineOverload = usedMachineOverload
+            }
+            if let perSide {
+                entry.sets[index].perSide = perSide
             }
             entry.sets[index].updatedAt = .now
             entry.status = .inProgress
@@ -321,6 +337,11 @@ final class AppStore: ObservableObject {
         }
         touch()
         Haptics.medium()
+    }
+
+    func discardActiveWorkout(sessionId: UUID) {
+        guard appData.workoutSessions.first(where: { $0.id == sessionId })?.status == .active else { return }
+        deleteWorkoutSession(sessionId)
     }
 
     func markExerciseComplete(sessionId: UUID, entryId: UUID) {
