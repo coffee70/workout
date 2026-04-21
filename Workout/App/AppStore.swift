@@ -663,6 +663,48 @@ final class AppStore: ObservableObject {
         touch()
     }
 
+    func moveRegimenItem(regimenId: UUID, dayId: UUID, itemId: UUID, toIndex: Int) {
+        guard let regimenIndex = appData.regimens.firstIndex(where: { $0.id == regimenId }),
+              let dayIndex = appData.regimens[regimenIndex].days.firstIndex(where: { $0.id == dayId }),
+              let sourceIndex = appData.regimens[regimenIndex].days[dayIndex].items.firstIndex(where: { $0.id == itemId }) else { return }
+
+        let maxIndex = appData.regimens[regimenIndex].days[dayIndex].items.count
+        let clampedIndex = max(0, min(toIndex, maxIndex))
+        guard sourceIndex != clampedIndex else { return }
+
+        var items = appData.regimens[regimenIndex].days[dayIndex].items
+        let movedItem = items.remove(at: sourceIndex)
+        let adjustedIndex = sourceIndex < clampedIndex ? clampedIndex - 1 : clampedIndex
+        items.insert(movedItem, at: max(0, min(adjustedIndex, items.count)))
+        appData.regimens[regimenIndex].days[dayIndex].items = items
+        reindexRegimenItems(regimenIndex: regimenIndex, dayIndex: dayIndex)
+        syncActiveWorkoutEntriesForRegimenDay(
+            regimenId: regimenId,
+            dayId: dayId,
+            orderedItemIDs: appData.regimens[regimenIndex].days[dayIndex].items.map(\.id)
+        )
+        appData.regimens[regimenIndex].updatedAt = .now
+        touch()
+        Haptics.light()
+    }
+
+    func deleteRegimenItem(regimenId: UUID, dayId: UUID, itemId: UUID) {
+        guard let regimenIndex = appData.regimens.firstIndex(where: { $0.id == regimenId }),
+              let dayIndex = appData.regimens[regimenIndex].days.firstIndex(where: { $0.id == dayId }),
+              let itemIndex = appData.regimens[regimenIndex].days[dayIndex].items.firstIndex(where: { $0.id == itemId }) else { return }
+
+        appData.regimens[regimenIndex].days[dayIndex].items.remove(at: itemIndex)
+        reindexRegimenItems(regimenIndex: regimenIndex, dayIndex: dayIndex)
+        syncActiveWorkoutEntriesForRegimenDay(
+            regimenId: regimenId,
+            dayId: dayId,
+            orderedItemIDs: appData.regimens[regimenIndex].days[dayIndex].items.map(\.id)
+        )
+        appData.regimens[regimenIndex].updatedAt = .now
+        touch()
+        Haptics.medium()
+    }
+
     func exportDocument() -> BackupDocument {
         BackupDocument(appData: appData)
     }
@@ -715,6 +757,28 @@ final class AppStore: ObservableObject {
         }
     }
 
+    private func syncActiveWorkoutEntriesForRegimenDay(regimenId: UUID, dayId: UUID, orderedItemIDs: [UUID]) {
+        let now = Date()
+
+        for sessionIndex in appData.workoutSessions.indices {
+            guard appData.workoutSessions[sessionIndex].status == .active,
+                  appData.workoutSessions[sessionIndex].regimenId == regimenId,
+                  appData.workoutSessions[sessionIndex].regimenDayId == dayId else { continue }
+
+            let currentEntries = appData.workoutSessions[sessionIndex].exerciseEntries.sorted { $0.orderIndex < $1.orderIndex }
+            let reorderedRegimenEntries = orderedItemIDs.compactMap { itemID in
+                currentEntries.first(where: { $0.sourceRegimenItemId == itemID })
+            }
+            let workoutOnlyEntries = currentEntries.filter { $0.sourceRegimenItemId == nil }
+            let rebuiltEntries = reorderedRegimenEntries + workoutOnlyEntries
+
+            guard rebuiltEntries != currentEntries else { continue }
+            appData.workoutSessions[sessionIndex].exerciseEntries = rebuiltEntries
+            reindexEntries(in: sessionIndex)
+            appData.workoutSessions[sessionIndex].updatedAt = now
+        }
+    }
+
     private func mutateEntry(sessionId: UUID, entryId: UUID, mutate: (inout WorkoutExerciseEntry) -> Void) {
         guard let sessionIndex = appData.workoutSessions.firstIndex(where: { $0.id == sessionId }),
               let entryIndex = appData.workoutSessions[sessionIndex].exerciseEntries.firstIndex(where: { $0.id == entryId }) else { return }
@@ -762,6 +826,12 @@ final class AppStore: ObservableObject {
     private func reindexEntries(in sessionIndex: Int) {
         for index in appData.workoutSessions[sessionIndex].exerciseEntries.indices {
             appData.workoutSessions[sessionIndex].exerciseEntries[index].orderIndex = index
+        }
+    }
+
+    private func reindexRegimenItems(regimenIndex: Int, dayIndex: Int) {
+        for index in appData.regimens[regimenIndex].days[dayIndex].items.indices {
+            appData.regimens[regimenIndex].days[dayIndex].items[index].orderIndex = index
         }
     }
 

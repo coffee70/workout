@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import UIKit
 
 struct LibraryView: View {
@@ -606,6 +607,7 @@ private struct RegimenDetailView: View {
     @State private var addItemTarget: AddRegimenItemTarget?
     @State private var itemDraft: RegimenItemDraft?
     @State private var regimenToArchive: Regimen?
+    @State private var pendingItemDeletion: PendingRegimenItemDeletion?
     @State private var expandedDayIds: Set<UUID> = []
     @State private var didCopyRegimen = false
     @State private var copyFeedbackTask: Task<Void, Never>?
@@ -622,6 +624,32 @@ private struct RegimenDetailView: View {
             try? await Task.sleep(nanoseconds: 1_350_000_000)
             guard !Task.isCancelled else { return }
             didCopyRegimen = false
+        }
+    }
+
+    private func requestDelete(_ item: RegimenItem, from day: RegimenDay) {
+        guard hasTrackedProgress(for: item.id, dayId: day.id) else {
+            store.deleteRegimenItem(regimenId: regimenId, dayId: day.id, itemId: item.id)
+            return
+        }
+
+        pendingItemDeletion = PendingRegimenItemDeletion(
+            regimenId: regimenId,
+            dayId: day.id,
+            itemId: item.id,
+            movementName: store.movementName(item.movementId)
+        )
+    }
+
+    private func hasTrackedProgress(for itemId: UUID, dayId: UUID) -> Bool {
+        store.appData.workoutSessions.contains { session in
+            session.status == .active &&
+            session.regimenId == regimenId &&
+            session.regimenDayId == dayId &&
+            session.exerciseEntries.contains { entry in
+                entry.sourceRegimenItemId == itemId &&
+                (!entry.sets.isEmpty || entry.status != .notStarted)
+            }
         }
     }
 
@@ -692,6 +720,7 @@ private struct RegimenDetailView: View {
 
                         ForEach(regimen.days.sorted(by: { $0.orderIndex < $1.orderIndex })) { day in
                             RegimenDayCard(
+                                regimenId: regimen.id,
                                 day: day,
                                 isExpanded: expandedDayIds.contains(day.id),
                                 onToggle: {
@@ -712,6 +741,9 @@ private struct RegimenDetailView: View {
                                 },
                                 onEditItem: { item in
                                     itemDraft = RegimenItemDraft(regimenId: regimen.id, dayId: day.id, item: item)
+                                },
+                                onDeleteItem: { item in
+                                    requestDelete(item, from: day)
                                 }
                             )
                         }
@@ -823,6 +855,24 @@ private struct RegimenDetailView: View {
         } message: {
             Text("Archived regimens are hidden until Show Archived is enabled.")
         }
+        .alert(
+            "Remove Movement?",
+            isPresented: Binding(
+                get: { pendingItemDeletion != nil },
+                set: { if !$0 { pendingItemDeletion = nil } }
+            ),
+            presenting: pendingItemDeletion
+        ) { deletion in
+            Button("Remove", role: .destructive) {
+                store.deleteRegimenItem(regimenId: deletion.regimenId, dayId: deletion.dayId, itemId: deletion.itemId)
+                pendingItemDeletion = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingItemDeletion = nil
+            }
+        } message: { deletion in
+            Text("\"\(deletion.movementName)\" already has progress in the active workout. Removing it here will also remove it from that workout.")
+        }
         .onDisappear {
             copyFeedbackTask?.cancel()
             copyFeedbackTask = nil
@@ -832,12 +882,14 @@ private struct RegimenDetailView: View {
 }
 
 private struct RegimenDayCard: View {
+    let regimenId: UUID
     let day: RegimenDay
     let isExpanded: Bool
     let onToggle: () -> Void
     let onEditDay: () -> Void
     let onAddItem: () -> Void
     let onEditItem: (RegimenItem) -> Void
+    let onDeleteItem: (RegimenItem) -> Void
 
     var body: some View {
         SurfaceCard {
@@ -868,10 +920,12 @@ private struct RegimenDayCard: View {
 
                 if isExpanded {
                     RegimenDayExpandedContent(
+                        regimenId: regimenId,
                         day: day,
                         onEditDay: onEditDay,
                         onAddItem: onAddItem,
-                        onEditItem: onEditItem
+                        onEditItem: onEditItem,
+                        onDeleteItem: onDeleteItem
                     )
                     .transition(.asymmetric(
                         insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),
@@ -884,18 +938,105 @@ private struct RegimenDayCard: View {
 }
 
 private struct RegimenDayExpandedContent: View {
+    @EnvironmentObject private var store: AppStore
+
+    let regimenId: UUID
     let day: RegimenDay
     let onEditDay: () -> Void
     let onAddItem: () -> Void
     let onEditItem: (RegimenItem) -> Void
+    let onDeleteItem: (RegimenItem) -> Void
+
+    @State private var activeDraggedItemID: UUID?
+    @State private var proposedDropIndex: Int?
+    @State private var rowFrames: [UUID: CGRect] = [:]
+
+    private var sortedItems: [RegimenItem] {
+        day.items.sorted(by: { $0.orderIndex < $1.orderIndex })
+    }
+
+    private var sourceIndex: Int? {
+        guard let activeDraggedItemID else { return nil }
+        return sortedItems.firstIndex(where: { $0.id == activeDraggedItemID })
+    }
+
+    private var visibleItems: [RegimenItem] {
+        guard let activeDraggedItemID else { return sortedItems }
+        return sortedItems.filter { $0.id != activeDraggedItemID }
+    }
+
+    private var effectiveDropIndex: Int? {
+        guard let sourceIndex else { return nil }
+        return max(0, min(proposedDropIndex ?? sourceIndex, visibleItems.count))
+    }
+
+    private var renderedItems: [RegimenDayReorderRenderItem] {
+        guard let effectiveDropIndex else {
+            return sortedItems.map(RegimenDayReorderRenderItem.entry)
+        }
+
+        var items: [RegimenDayReorderRenderItem] = []
+        for index in 0...visibleItems.count {
+            if index == effectiveDropIndex {
+                items.append(.placeholder(index))
+            }
+            if index < visibleItems.count {
+                items.append(.entry(visibleItems[index]))
+            }
+        }
+        return items
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(day.items.sorted(by: { $0.orderIndex < $1.orderIndex })) { item in
-                RegimenDayItemRow(item: item) {
-                    onEditItem(item)
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(renderedItems) { renderItem in
+                    switch renderItem {
+                    case .entry(let item):
+                        RegimenDayItemRow(
+                            item: item,
+                            onDragStarted: { draggedItemID in
+                                beginReorder(for: draggedItemID)
+                            },
+                            onEdit: {
+                                onEditItem(item)
+                            },
+                            onRemove: {
+                                onDeleteItem(item)
+                            }
+                        )
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: RegimenDayRowFramePreferenceKey.self,
+                                    value: [item.id: proxy.frame(in: .named(RegimenDayReorderCoordinateSpace.name(for: day.id)))]
+                                )
+                            }
+                        )
+                    case .placeholder:
+                        RegimenDayDropPlaceholder()
+                    }
                 }
             }
+            .coordinateSpace(name: RegimenDayReorderCoordinateSpace.name(for: day.id))
+            .contentShape(Rectangle())
+            .onPreferenceChange(RegimenDayRowFramePreferenceKey.self) { rowFrames = $0 }
+            .onDrop(
+                of: [UTType.text],
+                delegate: RegimenDayReorderDropDelegate(
+                    sortedItems: sortedItems,
+                    visibleItems: visibleItems,
+                    rowFrames: rowFrames,
+                    activeDraggedItemID: $activeDraggedItemID,
+                    proposedDropIndex: $proposedDropIndex,
+                    onCommitMove: { draggedItemID, targetIndex in
+                        store.moveRegimenItem(regimenId: regimenId, dayId: day.id, itemId: draggedItemID, toIndex: targetIndex)
+                    },
+                    onReset: resetReorderState
+                )
+            )
+            .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.84), value: renderedItems)
+            .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.84), value: activeDraggedItemID)
 
             HStack(spacing: 10) {
                 Button(action: onEditDay) {
@@ -910,37 +1051,258 @@ private struct RegimenDayExpandedContent: View {
             }
         }
     }
+
+    private func beginReorder(for itemID: UUID) {
+        activeDraggedItemID = itemID
+        if let sourceIndex = sortedItems.firstIndex(where: { $0.id == itemID }) {
+            proposedDropIndex = sourceIndex
+        }
+    }
+
+    private func resetReorderState() {
+        activeDraggedItemID = nil
+        proposedDropIndex = nil
+    }
 }
 
 private struct RegimenDayItemRow: View {
     @EnvironmentObject private var store: AppStore
 
     let item: RegimenItem
+    let onDragStarted: (UUID) -> Void
     let onEdit: () -> Void
+    let onRemove: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(store.movementName(item.movementId))
-                    .foregroundStyle(AppTheme.textPrimary)
-                Spacer()
-                if let muscleGroup = store.primaryMuscleGroupName(for: item.movementId) {
-                    StatusPill(title: muscleGroup, color: AppTheme.accent)
+        HStack(alignment: .center, spacing: 14) {
+            RegimenDayDragHandle()
+                .onDrag {
+                    onDragStarted(item.id)
+                    return NSItemProvider(object: item.id.uuidString as NSString)
+                } preview: {
+                    RegimenDayDraggedCardPreview(
+                        movementName: store.movementName(item.movementId),
+                        variationName: store.variationName(item.defaultVariationId),
+                        targetSummary: item.targetSummary
+                    )
                 }
+
+            Button(action: onEdit) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(store.movementName(item.movementId))
+                            .foregroundStyle(AppTheme.textPrimary)
+                        Spacer()
+                        if let muscleGroup = store.primaryMuscleGroupName(for: item.movementId) {
+                            StatusPill(title: muscleGroup, color: AppTheme.accent)
+                        }
+                    }
+                    Text(store.variationName(item.defaultVariationId))
+                        .foregroundStyle(AppTheme.textSecondary)
+                    Text(item.targetSummary)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.accentSecondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            Text(store.variationName(item.defaultVariationId))
-                .foregroundStyle(AppTheme.textSecondary)
-            Text(item.targetSummary)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(AppTheme.accentSecondary)
+            .buttonStyle(.plain)
+            .contextMenu {
+                Button("Edit", action: onEdit)
+                Button("Remove", role: .destructive, action: onRemove)
+            }
         }
         .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onEdit)
-        .contextMenu {
-            Button("Edit Target", action: onEdit)
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive, action: onRemove) {
+                Image(systemName: "trash")
+            }
+            .tint(AppTheme.danger)
+
+            Button(action: onEdit) {
+                Image(systemName: "pencil")
+            }
+            .tint(AppTheme.accent)
         }
     }
+}
+
+private enum RegimenDayReorderRenderItem: Identifiable, Equatable {
+    case entry(RegimenItem)
+    case placeholder(Int)
+
+    var id: String {
+        switch self {
+        case .entry(let item):
+            return item.id.uuidString
+        case .placeholder(let index):
+            return "placeholder-\(index)"
+        }
+    }
+}
+
+private enum RegimenDayReorderCoordinateSpace {
+    static func name(for dayID: UUID) -> String {
+        "RegimenDayReorderList-\(dayID.uuidString)"
+    }
+}
+
+private struct RegimenDayRowFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct RegimenDayDropPlaceholder: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .fill(AppTheme.accent.opacity(0.14))
+            .frame(height: 90)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(AppTheme.accent.opacity(0.9), style: StrokeStyle(lineWidth: 2, dash: [10, 8]))
+            )
+            .overlay(alignment: .leading) {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.title3.weight(.semibold))
+                    Text("Drop movement here")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(AppTheme.accent)
+                .padding(.horizontal, 18)
+            }
+            .transition(.asymmetric(insertion: .scale(scale: 0.98).combined(with: .opacity), removal: .opacity))
+    }
+}
+
+private struct RegimenDayDraggedCardPreview: View {
+    let movementName: String
+    let variationName: String
+    let targetSummary: String
+
+    var body: some View {
+        SurfaceCard {
+            HStack(alignment: .center, spacing: 14) {
+                RegimenDayDragHandle()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(movementName)
+                        .foregroundStyle(AppTheme.textPrimary)
+                    Text(variationName)
+                        .foregroundStyle(AppTheme.textSecondary)
+                    Text(targetSummary)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.accentSecondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .scaleEffect(1.03)
+        .opacity(0.96)
+        .shadow(color: Color.black.opacity(0.28), radius: 20, x: 0, y: 12)
+        .padding(.horizontal, 4)
+    }
+}
+
+private struct RegimenDayReorderDropDelegate: DropDelegate {
+    let sortedItems: [RegimenItem]
+    let visibleItems: [RegimenItem]
+    let rowFrames: [UUID: CGRect]
+    @Binding var activeDraggedItemID: UUID?
+    @Binding var proposedDropIndex: Int?
+    let onCommitMove: (UUID, Int) -> Void
+    let onReset: () -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [UTType.text])
+    }
+
+    func dropEntered(info: DropInfo) {
+        updateDropIndex(with: info.location)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        updateDropIndex(with: info.location)
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        proposedDropIndex = sourceIndex
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let draggedItemID = activeDraggedItemID,
+              let sourceIndex else {
+            onReset()
+            return false
+        }
+
+        let visibleDropIndex = resolvedDropIndex(for: info.location)
+        let targetIndex = visibleDropIndex > sourceIndex ? visibleDropIndex + 1 : visibleDropIndex
+        onCommitMove(draggedItemID, targetIndex)
+        onReset()
+        return true
+    }
+
+    private var sourceIndex: Int? {
+        guard let activeDraggedItemID else { return nil }
+        return sortedItems.firstIndex(where: { $0.id == activeDraggedItemID })
+    }
+
+    private func updateDropIndex(with location: CGPoint) {
+        proposedDropIndex = resolvedDropIndex(for: location)
+    }
+
+    private func resolvedDropIndex(for location: CGPoint) -> Int {
+        guard !visibleItems.isEmpty else { return 0 }
+
+        for (index, item) in visibleItems.enumerated() {
+            guard let frame = rowFrames[item.id] else { continue }
+            if location.y < frame.midY {
+                return index
+            }
+        }
+
+        return visibleItems.count
+    }
+}
+
+private struct RegimenDayDragHandle: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            VStack(spacing: 4) {
+                gripDot
+                gripDot
+                gripDot
+            }
+
+            VStack(spacing: 4) {
+                gripDot
+                gripDot
+                gripDot
+            }
+        }
+        .frame(width: 34, height: 34)
+        .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var gripDot: some View {
+        Circle()
+            .fill(AppTheme.textMuted)
+            .frame(width: 4, height: 4)
+    }
+}
+
+private struct PendingRegimenItemDeletion: Identifiable {
+    let regimenId: UUID
+    let dayId: UUID
+    let itemId: UUID
+    let movementName: String
+
+    var id: UUID { itemId }
 }
 
 private struct AddRegimenItemTarget: Identifiable {
