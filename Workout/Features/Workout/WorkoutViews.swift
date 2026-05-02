@@ -242,6 +242,27 @@ private struct WorkoutEntryCardContent: View {
     }
 }
 
+private enum ExerciseLoggingTab: String, CaseIterable, Identifiable {
+    case log
+    case history
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .log: return "Log"
+        case .history: return "History"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .log: return "square.and.pencil"
+        case .history: return "clock.arrow.circlepath"
+        }
+    }
+}
+
 struct ExerciseLoggingView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AppStore
@@ -254,6 +275,7 @@ struct ExerciseLoggingView: View {
     @State private var numericInput = ""
     @State private var isScrubbingMetric = false
     @State private var isReplaceSheetPresented = false
+    @State private var selectedTab: ExerciseLoggingTab = .log
 
     enum EditingField {
         case weight
@@ -313,181 +335,80 @@ struct ExerciseLoggingView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     SectionTitle(eyebrow: session.regimenDayNameSnapshot ?? "Workout", title: entry.performedMovementNameSnapshot)
 
-                    TargetCard(entry: entry)
+                    ExerciseLoggingTabSelector(selectedTab: $selectedTab)
 
-                    Text("Variation")
-                        .font(.headline)
-                        .foregroundStyle(AppTheme.textSecondary)
-                    RotatingSwipeDeck(items: variationDeckItems, onAdvance: { _ in
-                        store.advanceVariation(sessionId: session.id, entryId: entry.id)
-                    }) { item in
-                        SurfaceCard {
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack(alignment: .top) {
-                                    Text(item.variation.name)
-                                        .font(.title2.bold())
-                                        .foregroundStyle(AppTheme.textPrimary)
-                                    Spacer()
-                                    if item.variation.id == entry.plannedVariationId {
-                                        StatusPill(title: "Planned", color: AppTheme.accentSecondary)
-                                    }
+                    switch selectedTab {
+                    case .log:
+                        ExerciseLogTabContent(
+                            session: session,
+                            entry: entry,
+                            variationDeckItems: variationDeckItems,
+                            onVariationAdvance: {
+                                store.advanceVariation(sessionId: session.id, entryId: entry.id)
+                            },
+                            onStartEditingSet: { setId, field, initialValue in
+                                startEditing(setId: setId, field: field, initialValue: initialValue)
+                            },
+                            onScrubActiveChange: { isActive in
+                                isScrubbingMetric = isActive
+                            },
+                            onUpdateSetWeight: { setId, updatedWeight in
+                                store.updateSet(sessionId: session.id, entryId: entry.id, setId: setId, weight: updatedWeight)
+                            },
+                            onUpdateSetReps: { setId, updatedReps in
+                                store.updateSet(sessionId: session.id, entryId: entry.id, setId: setId, reps: updatedReps)
+                            },
+                            onToggleOverloaded: { setId, currentValue in
+                                Haptics.light()
+                                store.updateSet(
+                                    sessionId: session.id,
+                                    entryId: entry.id,
+                                    setId: setId,
+                                    usedMachineOverload: !currentValue
+                                )
+                            },
+                            onTogglePerSide: { setId, currentValue in
+                                Haptics.light()
+                                store.updateSet(
+                                    sessionId: session.id,
+                                    entryId: entry.id,
+                                    setId: setId,
+                                    perSide: !currentValue
+                                )
+                            },
+                            onDeleteSet: { setId in
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    store.deleteSet(sessionId: session.id, entryId: entry.id, setId: setId)
                                 }
-                                if let equipmentCategory = item.variation.equipmentCategory {
-                                    Text(equipmentCategory.displayName)
-                                        .foregroundStyle(AppTheme.textSecondary)
-                                } else {
-                                    Text(entry.performedMovementNameSnapshot)
-                                        .foregroundStyle(AppTheme.textSecondary)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
-                        }
-                    }
-                    .frame(height: 170)
-
-                    HistorySection(
-                        items: historyDeckItems
-                    ) {
-                        store.advanceViewedHistoryLocation(sessionId: session.id, entryId: entry.id)
-                    }
-
-                    if !history.movementMatches.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Other \(entry.performedMovementNameSnapshot) history")
-                                .font(.headline)
-                                .foregroundStyle(AppTheme.textSecondary)
-                            ForEach(history.movementMatches) { snapshot in
-                                HistoryCard(snapshot: snapshot)
-                            }
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Sets")
-                            .font(.headline)
-                            .foregroundStyle(AppTheme.textSecondary)
-
-                        ForEach(entry.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
-                            SurfaceCard {
-                                VStack(alignment: .leading, spacing: 14) {
-                                    HStack(spacing: 12) {
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            Text("Set \(set.setNumber)")
-                                                .font(.headline)
-                                                .foregroundStyle(AppTheme.textPrimary)
-                                            Text(set.weightUnit.displayName)
-                                                .foregroundStyle(AppTheme.textMuted)
-                                        }
-                                        LargeMetricButton(
-                                            value: set.weight,
-                                            label: "Weight",
-                                            configuration: .weight
-                                        ) {
-                                            startEditing(setId: set.id, field: .weight, initialValue: set.formattedWeight)
-                                        } onScrubActiveChange: { isActive in
-                                            isScrubbingMetric = isActive
-                                        } onValueChange: { updatedWeight in
-                                            store.updateSet(sessionId: session.id, entryId: entry.id, setId: set.id, weight: updatedWeight)
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                        LargeMetricButton(
-                                            value: Double(set.reps),
-                                            label: "Reps",
-                                            configuration: .reps
-                                        ) {
-                                            startEditing(setId: set.id, field: .reps, initialValue: "\(set.reps)")
-                                        } onScrubActiveChange: { isActive in
-                                            isScrubbingMetric = isActive
-                                        } onValueChange: { updatedReps in
-                                            store.updateSet(sessionId: session.id, entryId: entry.id, setId: set.id, reps: Int(updatedReps))
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                        Button(role: .destructive) {
-                                            withAnimation(.easeInOut(duration: 0.2)) {
-                                                store.deleteSet(sessionId: session.id, entryId: entry.id, setId: set.id)
-                                            }
-                                        } label: {
-                                            Image(systemName: "trash")
-                                                .font(.headline.weight(.semibold))
-                                                .foregroundStyle(AppTheme.danger)
-                                                .frame(width: 36, height: 36)
-                                                .background(
-                                                    Circle()
-                                                        .fill(AppTheme.danger.opacity(0.18))
-                                                )
-                                        }
-                                        .buttonStyle(.plain)
-                                        .accessibilityLabel("Delete Set \(set.setNumber)")
-                                    }
-                                    SetRecordingFlagsRow(
-                                        isOverloaded: set.usedMachineOverload,
-                                        isPerSide: set.perSide,
-                                        onToggleOverloaded: {
-                                            Haptics.light()
-                                            store.updateSet(
-                                                sessionId: session.id,
-                                                entryId: entry.id,
-                                                setId: set.id,
-                                                usedMachineOverload: !set.usedMachineOverload
-                                            )
-                                        },
-                                        onTogglePerSide: {
-                                            Haptics.light()
-                                            store.updateSet(
-                                                sessionId: session.id,
-                                                entryId: entry.id,
-                                                setId: set.id,
-                                                perSide: !set.perSide
-                                            )
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    .animation(.easeInOut(duration: 0.2), value: entry.sets.map(\.id))
-
-                    Button {
-                        store.addSet(sessionId: session.id, entryId: entry.id)
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.headline)
-                                .foregroundStyle(AppTheme.accent)
-                            Text("Add Set")
-                        }
-                    }
-                    .buttonStyle(AddSetButtonStyle())
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Actions")
-                            .font(.headline)
-                            .foregroundStyle(AppTheme.textSecondary)
-
-                        HStack(spacing: 12) {
-                            Button("Skip") {
+                            },
+                            onAddSet: {
+                                store.addSet(sessionId: session.id, entryId: entry.id)
+                            },
+                            onSkip: {
                                 store.skipExercise(sessionId: session.id, entryId: entry.id)
                                 dismiss()
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-
-                            Button("Replace") {
+                            },
+                            onReplace: {
                                 isReplaceSheetPresented = true
+                            },
+                            onComplete: {
+                                store.markExerciseComplete(sessionId: session.id, entryId: entry.id)
+                                dismiss()
                             }
-                            .buttonStyle(SecondaryButtonStyle())
-                        }
-
-                        Button("Complete") {
-                            store.markExerciseComplete(sessionId: session.id, entryId: entry.id)
-                            dismiss()
-                        }
-                        .buttonStyle(PrimaryButtonStyle())
+                        )
+                    case .history:
+                        ExerciseHistoryTabContent(
+                            history: history,
+                            historyDeckItems: historyDeckItems,
+                            onAdvanceHistoryLocation: {
+                                store.advanceViewedHistoryLocation(sessionId: session.id, entryId: entry.id)
+                            }
+                        )
                     }
-                    .padding(.top, 12)
                 }
                 .padding()
             }
-            .scrollDisabled(isScrubbingMetric)
+            .scrollDisabled(selectedTab == .log && isScrubbingMetric)
             .background(AppTheme.background.ignoresSafeArea())
             .sheet(isPresented: Binding(
                 get: { editingSetID != nil },
@@ -541,6 +462,476 @@ struct ExerciseLoggingView: View {
     }
 }
 
+private struct ExerciseLoggingTabSelector: View {
+    @Binding var selectedTab: ExerciseLoggingTab
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(ExerciseLoggingTab.allCases) { tab in
+                Button {
+                    guard selectedTab != tab else { return }
+                    Haptics.light()
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
+                        selectedTab = tab
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: tab.systemImage)
+                        Text(tab.title)
+                    }
+                    .font(.headline.weight(selectedTab == tab ? .bold : .semibold))
+                    .foregroundStyle(selectedTab == tab ? .black : AppTheme.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(selectedTab == tab ? AppTheme.accent : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(6)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(AppTheme.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct ExerciseLogTabContent: View {
+    let session: WorkoutSession
+    let entry: WorkoutExerciseEntry
+    let variationDeckItems: [VariationDeckCardItem]
+    let onVariationAdvance: () -> Void
+    let onStartEditingSet: (UUID, ExerciseLoggingView.EditingField, String) -> Void
+    let onScrubActiveChange: (Bool) -> Void
+    let onUpdateSetWeight: (UUID, Double) -> Void
+    let onUpdateSetReps: (UUID, Int) -> Void
+    let onToggleOverloaded: (UUID, Bool) -> Void
+    let onTogglePerSide: (UUID, Bool) -> Void
+    let onDeleteSet: (UUID) -> Void
+    let onAddSet: () -> Void
+    let onSkip: () -> Void
+    let onReplace: () -> Void
+    let onComplete: () -> Void
+
+    private var statusPillColor: Color {
+        switch entry.status {
+        case .notStarted: return AppTheme.textMuted
+        case .inProgress: return AppTheme.accent
+        case .completed: return AppTheme.accentSecondary
+        case .skipped: return AppTheme.warning
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Today")
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.textSecondary)
+                    Spacer()
+                    StatusPill(title: entry.status.displayName, color: statusPillColor)
+                }
+
+                SurfaceCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Target")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(AppTheme.textSecondary)
+                                Text(entry.targetSummary)
+                                    .font(.title3.bold())
+                                    .foregroundStyle(AppTheme.accentSecondary)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 6) {
+                                Text("Variation")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(AppTheme.textSecondary)
+                                Text(entry.performedVariationNameSnapshot)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(AppTheme.textPrimary)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                        }
+                    }
+                }
+
+                Text("Swipe to change variation")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AppTheme.textMuted)
+
+                RotatingSwipeDeck(items: variationDeckItems, onAdvance: { _ in
+                    onVariationAdvance()
+                }) { item in
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .top) {
+                                Text(item.variation.name)
+                                    .font(.title2.bold())
+                                    .foregroundStyle(AppTheme.textPrimary)
+                                Spacer()
+                                if item.variation.id == entry.plannedVariationId {
+                                    StatusPill(title: "Planned", color: AppTheme.accentSecondary)
+                                }
+                            }
+                            if let equipmentCategory = item.variation.equipmentCategory {
+                                Text(equipmentCategory.displayName)
+                                    .foregroundStyle(AppTheme.textSecondary)
+                            } else {
+                                Text(entry.performedMovementNameSnapshot)
+                                    .foregroundStyle(AppTheme.textSecondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
+                    }
+                }
+                .frame(height: 150)
+            }
+
+            ExerciseSetsSection(
+                session: session,
+                entry: entry,
+                onStartEditingSet: onStartEditingSet,
+                onScrubActiveChange: onScrubActiveChange,
+                onUpdateSetWeight: onUpdateSetWeight,
+                onUpdateSetReps: onUpdateSetReps,
+                onToggleOverloaded: onToggleOverloaded,
+                onTogglePerSide: onTogglePerSide,
+                onDeleteSet: onDeleteSet
+            )
+
+            Button {
+                onAddSet()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.accent)
+                    Text("Add Set")
+                }
+            }
+            .buttonStyle(AddSetButtonStyle())
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Actions")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textSecondary)
+
+                HStack(spacing: 12) {
+                    Button("Skip", action: onSkip)
+                        .buttonStyle(SecondaryButtonStyle())
+
+                    Button("Replace", action: onReplace)
+                        .buttonStyle(SecondaryButtonStyle())
+                }
+
+                Button("Complete", action: onComplete)
+                    .buttonStyle(PrimaryButtonStyle())
+            }
+            .padding(.top, 8)
+        }
+    }
+}
+
+private struct ExerciseSetsSection: View {
+    let session: WorkoutSession
+    let entry: WorkoutExerciseEntry
+    let onStartEditingSet: (UUID, ExerciseLoggingView.EditingField, String) -> Void
+    let onScrubActiveChange: (Bool) -> Void
+    let onUpdateSetWeight: (UUID, Double) -> Void
+    let onUpdateSetReps: (UUID, Int) -> Void
+    let onToggleOverloaded: (UUID, Bool) -> Void
+    let onTogglePerSide: (UUID, Bool) -> Void
+    let onDeleteSet: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Sets")
+                .font(.headline)
+                .foregroundStyle(AppTheme.textSecondary)
+            Text("Tap a number to type. Drag vertically to scrub.")
+                .font(.caption)
+                .foregroundStyle(AppTheme.textMuted)
+
+            if entry.sets.isEmpty {
+                SurfaceCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("No sets logged yet")
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.textPrimary)
+                        Text("Add your first set to start tracking this movement.")
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                ForEach(entry.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 14) {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Set \(set.setNumber)")
+                                        .font(.headline)
+                                        .foregroundStyle(AppTheme.textPrimary)
+                                    Text(set.weightUnit.displayName)
+                                        .foregroundStyle(AppTheme.textMuted)
+                                }
+                                LargeMetricButton(
+                                    value: set.weight,
+                                    label: "Weight",
+                                    configuration: .weight
+                                ) {
+                                    onStartEditingSet(set.id, .weight, set.formattedWeight)
+                                } onScrubActiveChange: { isActive in
+                                    onScrubActiveChange(isActive)
+                                } onValueChange: { value in
+                                    onUpdateSetWeight(set.id, value)
+                                }
+                                .frame(maxWidth: .infinity)
+                                LargeMetricButton(
+                                    value: Double(set.reps),
+                                    label: "Reps",
+                                    configuration: .reps
+                                ) {
+                                    onStartEditingSet(set.id, .reps, "\(set.reps)")
+                                } onScrubActiveChange: { isActive in
+                                    onScrubActiveChange(isActive)
+                                } onValueChange: { value in
+                                    onUpdateSetReps(set.id, Int(value))
+                                }
+                                .frame(maxWidth: .infinity)
+                                Button(role: .destructive) {
+                                    onDeleteSet(set.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.headline.weight(.semibold))
+                                        .foregroundStyle(AppTheme.danger)
+                                        .frame(width: 36, height: 36)
+                                        .background(
+                                            Circle()
+                                                .fill(AppTheme.danger.opacity(0.18))
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Delete Set \(set.setNumber)")
+                            }
+                            SetRecordingFlagsRow(
+                                isOverloaded: set.usedMachineOverload,
+                                isPerSide: set.perSide,
+                                onToggleOverloaded: {
+                                    onToggleOverloaded(set.id, set.usedMachineOverload)
+                                },
+                                onTogglePerSide: {
+                                    onTogglePerSide(set.id, set.perSide)
+                                }
+                            )
+                        }
+                    }
+                }
+                .animation(.easeInOut(duration: 0.2), value: entry.sets.map(\.id))
+            }
+        }
+    }
+}
+
+private struct ExerciseHistoryTabContent: View {
+    let history: HistoryResult
+    let historyDeckItems: [HistoryLocationDeckItem]
+    let onAdvanceHistoryLocation: () -> Void
+
+    private var isHistoryEmpty: Bool {
+        history.exact == nil && history.variationAnywhere == nil && history.movementMatches.isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if isHistoryEmpty {
+                HistoryEmptyStateCard()
+            } else {
+                HistoryOverviewGrid(history: history)
+
+                GymHistoryDeckSection(items: historyDeckItems, onAdvanceLocation: onAdvanceHistoryLocation)
+
+                if let exact = history.exact {
+                    DetailedHistorySnapshotCard(title: "Last exact match", snapshot: exact)
+                }
+
+                if let anywhere = history.variationAnywhere,
+                   anywhere.id != history.exact?.id {
+                    DetailedHistorySnapshotCard(title: "Last variation anywhere", snapshot: anywhere)
+                }
+
+                if !history.movementMatches.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Other Variations")
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.textSecondary)
+                        Text("Recent sessions for this movement using a different variation.")
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.textMuted)
+
+                        ForEach(history.movementMatches) { snapshot in
+                            MovementHistoryCard(snapshot: snapshot)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct HistoryOverviewGrid: View {
+    let history: HistoryResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Overview")
+                .font(.headline)
+                .foregroundStyle(AppTheme.textSecondary)
+            HStack(spacing: 12) {
+                HistoryOverviewMetricCard(title: "This Gym", snapshot: history.exact)
+                HistoryOverviewMetricCard(title: "Any Gym", snapshot: history.variationAnywhere)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct HistoryOverviewMetricCard: View {
+    let title: String
+    let snapshot: HistorySnapshot?
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(AppTheme.textMuted)
+
+                if let snapshot {
+                    Text(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.textSecondary)
+                    Text(snapshot.summary.isEmpty ? "—" : snapshot.summary)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.textPrimary)
+                        .lineLimit(2)
+                } else {
+                    Text("No match")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.textMuted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct HistoryEmptyStateCard: View {
+    var body: some View {
+        SurfaceCard {
+            VStack(spacing: 14) {
+                Image(systemName: "clock.badge.questionmark")
+                    .font(.title)
+                    .foregroundStyle(AppTheme.textMuted)
+
+                Text("No history yet")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textPrimary)
+
+                Text("Complete this movement once and your previous sets will appear here.")
+                    .font(.subheadline)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(AppTheme.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+    }
+}
+
+private struct DetailedHistorySnapshotCard: View {
+    let title: String
+    let snapshot: HistorySnapshot?
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textSecondary)
+
+                if let snapshot {
+                    Text(snapshot.variationName)
+                        .font(.title3.bold())
+                        .foregroundStyle(AppTheme.textPrimary)
+
+                    Text(snapshot.locationName)
+                        .foregroundStyle(AppTheme.textSecondary)
+
+                    Text(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.textMuted)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(snapshot.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
+                            HistorySetRow(set: set)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct HistorySetRow: View {
+    let set: SetEntry
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("Set \(set.setNumber)")
+                .foregroundStyle(AppTheme.textSecondary)
+            Spacer()
+            Text("\(set.formattedWeight) x \(set.reps)\(set.historyFlagSuffix)")
+                .font(.headline)
+                .foregroundStyle(AppTheme.textPrimary)
+        }
+    }
+}
+
+private struct MovementHistoryCard: View {
+    let snapshot: HistorySnapshot
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(snapshot.variationName)
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textPrimary)
+                Text("\(snapshot.locationName) • \(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.textSecondary)
+                Text(snapshot.summary)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.textPrimary)
+                    .lineLimit(3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
 private struct VariationDeckCardItem: Identifiable, Equatable {
     let variation: Variation
 
@@ -587,45 +978,39 @@ private func primaryHistoryForLocationDeck(from history: HistoryResult) -> Label
     return LabeledHistory(title: "Last at this gym", snapshot: nil)
 }
 
-private struct TargetCard: View {
-    let entry: WorkoutExerciseEntry
-
-    var body: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Target")
-                    .font(.headline)
-                    .foregroundStyle(AppTheme.textSecondary)
-                Text(entry.targetSummary)
-                    .font(.title3.bold())
-                    .foregroundStyle(AppTheme.accentSecondary)
-            }
-        }
-    }
-}
-
-private struct HistorySection: View {
+private struct GymHistoryDeckSection: View {
     let items: [HistoryLocationDeckItem]
     let onAdvanceLocation: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("History")
+            Text("Gym History")
                 .font(.headline)
                 .foregroundStyle(AppTheme.textSecondary)
             RotatingSwipeDeck(items: items, onAdvance: { _ in
                 onAdvanceLocation()
             }) { item in
                 SurfaceCard {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         Text(item.location.name)
                             .font(.headline)
                             .foregroundStyle(AppTheme.textPrimary)
                         Text(item.title)
+                            .font(.subheadline.weight(.semibold))
                             .foregroundStyle(AppTheme.textSecondary)
+
                         if let snapshot = item.snapshot {
+                            HStack(alignment: .center, spacing: 8) {
+                                Text(snapshot.variationName)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(AppTheme.textPrimary)
+                                    .lineLimit(2)
+                                Spacer(minLength: 8)
+                                StatusPill(title: "Exact Match", color: AppTheme.accentSecondary)
+                            }
                             Text(snapshot.summary)
                                 .foregroundStyle(AppTheme.textPrimary)
+                                .lineLimit(4)
                             Text(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))
                                 .foregroundStyle(AppTheme.textMuted)
                         } else {
@@ -633,28 +1018,10 @@ private struct HistorySection: View {
                                 .foregroundStyle(AppTheme.textMuted)
                         }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 140, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: 150, alignment: .leading)
                 }
             }
-            .frame(height: 190)
-        }
-    }
-}
-
-private struct HistoryCard: View {
-    let snapshot: HistorySnapshot
-
-    var body: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(snapshot.variationName)
-                    .font(.headline)
-                    .foregroundStyle(AppTheme.textPrimary)
-                Text("\(snapshot.locationName) • \(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))")
-                    .foregroundStyle(AppTheme.textSecondary)
-                Text(snapshot.summary)
-                    .foregroundStyle(AppTheme.textPrimary)
-            }
+            .frame(height: 200)
         }
     }
 }
