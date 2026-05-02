@@ -134,6 +134,19 @@ final class AppStore: ObservableObject {
         )
     }
 
+    func historySnapshots(
+        variationId: UUID,
+        locationId: UUID,
+        excluding sessionId: UUID?
+    ) -> [HistorySnapshot] {
+        historyService.snapshots(
+            variationId: variationId,
+            locationId: locationId,
+            excluding: sessionId,
+            in: appData.workoutSessions
+        )
+    }
+
     func load() {
         do {
             appData = try persistence.load()

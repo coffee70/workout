@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct WorkoutFlowView: View {
@@ -242,7 +243,7 @@ private struct WorkoutEntryCardContent: View {
     }
 }
 
-private enum ExerciseLoggingTab: String, CaseIterable, Identifiable {
+private enum ExerciseLoggingTab: String, CaseIterable, Identifiable, Hashable {
     case log
     case history
 
@@ -252,13 +253,6 @@ private enum ExerciseLoggingTab: String, CaseIterable, Identifiable {
         switch self {
         case .log: return "Log"
         case .history: return "History"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .log: return "square.and.pencil"
-        case .history: return "clock.arrow.circlepath"
         }
     }
 }
@@ -276,6 +270,9 @@ struct ExerciseLoggingView: View {
     @State private var isScrubbingMetric = false
     @State private var isReplaceSheetPresented = false
     @State private var selectedTab: ExerciseLoggingTab = .log
+    @State private var selectedHistoryVariationId: UUID?
+    @State private var selectedHistoryLocationId: UUID?
+    @State private var selectedHistorySnapshotIndex: Int = 0
 
     enum EditingField {
         case weight
@@ -306,31 +303,20 @@ struct ExerciseLoggingView: View {
         }
     }
 
-    private var historyDeckItems: [HistoryLocationDeckItem] {
-        guard let session, let entry else { return [] }
-        let locations = store.activeLocations
-        guard !locations.isEmpty else { return [] }
-
-        let currentLocationId = entry.viewedHistoryLocationId ?? session.locationId
-        let order = orderedIDs(
-            currentIDs: locations.map(\.id),
-            preferredOrder: [],
-            fallbackCurrentID: currentLocationId
-        )
-        let locationsByID = Dictionary(uniqueKeysWithValues: locations.map { ($0.id, $0) })
-
-        return order.compactMap { locationID in
-            guard let location = locationsByID[locationID] else { return nil }
-            let labeledHistory = primaryHistoryForLocationDeck(
-                from: store.history(for: session, entry: entry, locationId: location.id)
-            )
-            return HistoryLocationDeckItem(location: location, title: labeledHistory.title, snapshot: labeledHistory.snapshot)
-        }
-    }
-
     var body: some View {
         if let session, let entry {
-            let history = store.history(for: session, entry: entry)
+            let lastExactAtWorkoutGym = store.history(for: session, entry: entry, locationId: session.locationId).exact
+            let explorerVariationItems = historyExplorerVariationDeckItems(entry: entry)
+            let explorerLocationItems = historyExplorerLocationDeckItems(session: session)
+            let browserSnapshots = store.historySnapshots(
+                variationId: resolvedHistoryExplorerVariationId(entry: entry),
+                locationId: resolvedHistoryExplorerLocationId(session: session),
+                excluding: session.id
+            )
+            let rotatedBrowserSnapshots: [HistorySnapshot] = browserSnapshots.isEmpty
+                ? []
+                : browserSnapshots.rotated(startingAt: selectedHistorySnapshotIndex % browserSnapshots.count)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     SectionTitle(eyebrow: session.regimenDayNameSnapshot ?? "Workout", title: entry.performedMovementNameSnapshot)
@@ -398,10 +384,24 @@ struct ExerciseLoggingView: View {
                         )
                     case .history:
                         ExerciseHistoryTabContent(
-                            history: history,
-                            historyDeckItems: historyDeckItems,
-                            onAdvanceHistoryLocation: {
-                                store.advanceViewedHistoryLocation(sessionId: session.id, entryId: entry.id)
+                            session: session,
+                            entry: entry,
+                            lastExactSnapshot: lastExactAtWorkoutGym,
+                            explorerVariationItems: explorerVariationItems,
+                            explorerLocationItems: explorerLocationItems,
+                            browserDisplaySnapshots: rotatedBrowserSnapshots,
+                            browserTotalCount: browserSnapshots.count,
+                            browserDisplayIndex: browserSnapshots.isEmpty
+                                ? 0
+                                : (selectedHistorySnapshotIndex % browserSnapshots.count) + 1,
+                            onAdvanceExplorerVariation: {
+                                advanceHistoryExplorerVariation(entry: entry)
+                            },
+                            onAdvanceExplorerLocation: {
+                                advanceHistoryExplorerLocation(session: session)
+                            },
+                            onAdvanceBrowserSnapshot: {
+                                advanceHistorySnapshotBrowser(count: browserSnapshots.count)
                             }
                         )
                     }
@@ -409,6 +409,11 @@ struct ExerciseLoggingView: View {
                 .padding()
             }
             .scrollDisabled(selectedTab == .log && isScrubbingMetric)
+            .onChange(of: entry.performedVariationId) { _, _ in
+                selectedHistoryVariationId = nil
+                selectedHistoryLocationId = nil
+                selectedHistorySnapshotIndex = 0
+            }
             .background(AppTheme.background.ignoresSafeArea())
             .sheet(isPresented: Binding(
                 get: { editingSetID != nil },
@@ -447,6 +452,89 @@ struct ExerciseLoggingView: View {
         }
     }
 
+    private func resolvedHistoryExplorerVariationId(entry: WorkoutExerciseEntry) -> UUID {
+        let variations = store.variations(for: entry.performedMovementId)
+        guard let stored = selectedHistoryVariationId else {
+            return entry.performedVariationId
+        }
+        if variations.contains(where: { $0.id == stored }) {
+            return stored
+        }
+        return entry.performedVariationId
+    }
+
+    private func resolvedHistoryExplorerLocationId(session: WorkoutSession) -> UUID {
+        let locations = store.activeLocations
+        guard let stored = selectedHistoryLocationId else {
+            return session.locationId
+        }
+        if locations.contains(where: { $0.id == stored }) {
+            return stored
+        }
+        return session.locationId
+    }
+
+    private func historyExplorerVariationDeckItems(entry: WorkoutExerciseEntry) -> [VariationDeckCardItem] {
+        let variations = store.variations(for: entry.performedMovementId)
+        guard !variations.isEmpty else { return [] }
+
+        let effective = resolvedHistoryExplorerVariationId(entry: entry)
+        let order = orderedIDs(
+            currentIDs: variations.map(\.id),
+            preferredOrder: [],
+            fallbackCurrentID: effective
+        )
+        let variationsByID = Dictionary(uniqueKeysWithValues: variations.map { ($0.id, $0) })
+        return order.compactMap { variationsByID[$0].map(VariationDeckCardItem.init) }
+    }
+
+    private func historyExplorerLocationDeckItems(session: WorkoutSession) -> [LocationHistorySelectorItem] {
+        let locations = store.activeLocations
+        guard !locations.isEmpty else { return [] }
+
+        let effective = resolvedHistoryExplorerLocationId(session: session)
+        let order = orderedIDs(
+            currentIDs: locations.map(\.id),
+            preferredOrder: [],
+            fallbackCurrentID: effective
+        )
+        let locationsByID = Dictionary(uniqueKeysWithValues: locations.map { ($0.id, $0) })
+        return order.compactMap { locationsByID[$0].map(LocationHistorySelectorItem.init) }
+    }
+
+    private func advanceHistoryExplorerVariation(entry: WorkoutExerciseEntry) {
+        let variations = store.variations(for: entry.performedMovementId)
+        guard !variations.isEmpty else { return }
+
+        let ids = orderedIDs(
+            currentIDs: variations.map(\.id),
+            preferredOrder: [],
+            fallbackCurrentID: resolvedHistoryExplorerVariationId(entry: entry)
+        )
+        let next = ids.count == 1 ? ids[0] : ids[1]
+        selectedHistoryVariationId = next
+        selectedHistorySnapshotIndex = 0
+    }
+
+    private func advanceHistoryExplorerLocation(session: WorkoutSession) {
+        let locations = store.activeLocations
+        guard !locations.isEmpty else { return }
+
+        let ids = orderedIDs(
+            currentIDs: locations.map(\.id),
+            preferredOrder: [],
+            fallbackCurrentID: resolvedHistoryExplorerLocationId(session: session)
+        )
+        let next = ids.count == 1 ? ids[0] : ids[1]
+        selectedHistoryLocationId = next
+        selectedHistorySnapshotIndex = 0
+    }
+
+    private func advanceHistorySnapshotBrowser(count: Int) {
+        guard count > 0 else { return }
+        selectedHistorySnapshotIndex = (selectedHistorySnapshotIndex + 1) % count
+    }
+
     private func startEditing(setId: UUID, field: EditingField, initialValue: String) {
         editingSetID = setId
         editingField = field
@@ -466,40 +554,122 @@ private struct ExerciseLoggingTabSelector: View {
     @Binding var selectedTab: ExerciseLoggingTab
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(ExerciseLoggingTab.allCases) { tab in
-                Button {
-                    guard selectedTab != tab else { return }
-                    Haptics.light()
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
-                        selectedTab = tab
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: tab.systemImage)
-                        Text(tab.title)
-                    }
-                    .font(.headline.weight(selectedTab == tab ? .bold : .semibold))
-                    .foregroundStyle(selectedTab == tab ? .black : AppTheme.textSecondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(selectedTab == tab ? AppTheme.accent : Color.clear)
-                    )
-                }
-                .buttonStyle(.plain)
-            }
+        SegmentedExerciseTabPicker(selectedTab: $selectedTab)
+            .frame(maxWidth: .infinity)
+            /// Host view reports intrinsic height so `ScrollView` does not shrink the segmented control vertically.
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 10)
+    }
+}
+
+/// Host sized for intrinsic height (`UISegmentedControl` ignores font when reporting intrinsic size — common under `ScrollView`).
+private final class SegmentPickerHostView: UIView {
+    let segmentedControl: UISegmentedControl
+    private var enforcedHeight: CGFloat = 52
+
+    init(segmentedControl: UISegmentedControl) {
+        self.segmentedControl = segmentedControl
+        super.init(frame: .zero)
+        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(segmentedControl)
+        NSLayoutConstraint.activate([
+            segmentedControl.leadingAnchor.constraint(equalTo: leadingAnchor),
+            segmentedControl.trailingAnchor.constraint(equalTo: trailingAnchor),
+            segmentedControl.topAnchor.constraint(equalTo: topAnchor),
+            segmentedControl.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func setEnforcedHeight(_ height: CGFloat) {
+        let rounded = ceil(height)
+        guard enforcedHeight != rounded else { return }
+        enforcedHeight = rounded
+        invalidateIntrinsicContentSize()
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: enforcedHeight)
+    }
+
+    /// Fills the enforced height inside a scroll view while matching the segmented title font.
+    static func minHeight(for font: UIFont) -> CGFloat {
+        let metrics = UIFontMetrics(forTextStyle: .title3)
+        let paddedLine = ceil(font.lineHeight + metrics.scaledValue(for: 18))
+        let floor = metrics.scaledValue(for: 52)
+        return max(floor, paddedLine)
+    }
+}
+
+/// UIKit segmented control so segment titles respect `setTitleTextAttributes` (SwiftUI segmented `Picker` often ignores label fonts).
+private struct SegmentedExerciseTabPicker: UIViewRepresentable {
+    @Binding var selectedTab: ExerciseLoggingTab
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    final class Coordinator: NSObject {
+        var parent: SegmentedExerciseTabPicker
+
+        init(_ parent: SegmentedExerciseTabPicker) {
+            self.parent = parent
         }
-        .padding(6)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(AppTheme.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
-                )
+
+        @objc func valueChanged(_ sender: UISegmentedControl) {
+            let cases = Array(ExerciseLoggingTab.allCases)
+            let idx = sender.selectedSegmentIndex
+            guard idx >= 0, idx < cases.count else { return }
+            let next = cases[idx]
+            guard parent.selectedTab != next else { return }
+            parent.selectedTab = next
+        }
+    }
+
+    private static func titleFont() -> UIFont {
+        let base = UIFont.systemFont(ofSize: 20, weight: .semibold)
+        return UIFontMetrics(forTextStyle: .title3).scaledFont(for: base)
+    }
+
+    private static func applyTitleFont(to control: UISegmentedControl) {
+        let font = titleFont()
+        control.setTitleTextAttributes([.font: font], for: .normal)
+        control.setTitleTextAttributes([.font: font], for: .selected)
+    }
+
+    func makeUIView(context: Context) -> SegmentPickerHostView {
+        let control = UISegmentedControl(items: ExerciseLoggingTab.allCases.map(\.title))
+        Self.applyTitleFont(to: control)
+
+        control.selectedSegmentIndex = ExerciseLoggingTab.allCases.firstIndex(of: selectedTab) ?? 0
+        control.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.valueChanged(_:)),
+            for: .valueChanged
         )
+        control.accessibilityLabel = "Log or History"
+
+        let font = Self.titleFont()
+        let host = SegmentPickerHostView(segmentedControl: control)
+        host.setEnforcedHeight(SegmentPickerHostView.minHeight(for: font))
+        return host
+    }
+
+    func updateUIView(_ host: SegmentPickerHostView, context: Context) {
+        Self.applyTitleFont(to: host.segmentedControl)
+
+        let font = Self.titleFont()
+        host.setEnforcedHeight(SegmentPickerHostView.minHeight(for: font))
+
+        let idx = ExerciseLoggingTab.allCases.firstIndex(of: selectedTab) ?? 0
+        if host.segmentedControl.selectedSegmentIndex != idx {
+            host.segmentedControl.selectedSegmentIndex = idx
+        }
     }
 }
 
@@ -564,10 +734,6 @@ private struct ExerciseLogTabContent: View {
                         }
                     }
                 }
-
-                Text("Swipe to change variation")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AppTheme.textMuted)
 
                 RotatingSwipeDeck(items: variationDeckItems, onAdvance: { _ in
                     onVariationAdvance()
@@ -658,24 +824,8 @@ private struct ExerciseSetsSection: View {
             Text("Sets")
                 .font(.headline)
                 .foregroundStyle(AppTheme.textSecondary)
-            Text("Tap a number to type. Drag vertically to scrub.")
-                .font(.caption)
-                .foregroundStyle(AppTheme.textMuted)
 
-            if entry.sets.isEmpty {
-                SurfaceCard {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("No sets logged yet")
-                            .font(.headline)
-                            .foregroundStyle(AppTheme.textPrimary)
-                        Text("Add your first set to start tracking this movement.")
-                            .font(.subheadline)
-                            .foregroundStyle(AppTheme.textSecondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else {
-                ForEach(entry.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
+            ForEach(entry.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
                     SurfaceCard {
                         VStack(alignment: .leading, spacing: 14) {
                             HStack(spacing: 12) {
@@ -739,159 +889,264 @@ private struct ExerciseSetsSection: View {
                     }
                 }
                 .animation(.easeInOut(duration: 0.2), value: entry.sets.map(\.id))
-            }
         }
     }
 }
 
 private struct ExerciseHistoryTabContent: View {
-    let history: HistoryResult
-    let historyDeckItems: [HistoryLocationDeckItem]
-    let onAdvanceHistoryLocation: () -> Void
-
-    private var isHistoryEmpty: Bool {
-        history.exact == nil && history.variationAnywhere == nil && history.movementMatches.isEmpty
-    }
+    let session: WorkoutSession
+    let entry: WorkoutExerciseEntry
+    let lastExactSnapshot: HistorySnapshot?
+    let explorerVariationItems: [VariationDeckCardItem]
+    let explorerLocationItems: [LocationHistorySelectorItem]
+    let browserDisplaySnapshots: [HistorySnapshot]
+    let browserTotalCount: Int
+    let browserDisplayIndex: Int
+    let onAdvanceExplorerVariation: () -> Void
+    let onAdvanceExplorerLocation: () -> Void
+    let onAdvanceBrowserSnapshot: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if isHistoryEmpty {
-                HistoryEmptyStateCard()
-            } else {
-                HistoryOverviewGrid(history: history)
+            LastExactMatchRecommendationCard(
+                session: session,
+                entry: entry,
+                snapshot: lastExactSnapshot
+            )
 
-                GymHistoryDeckSection(items: historyDeckItems, onAdvanceLocation: onAdvanceHistoryLocation)
+            HistoryExplorerControls(
+                variationItems: explorerVariationItems,
+                locationItems: explorerLocationItems,
+                onAdvanceVariation: onAdvanceExplorerVariation,
+                onAdvanceLocation: onAdvanceExplorerLocation
+            )
 
-                if let exact = history.exact {
-                    DetailedHistorySnapshotCard(title: "Last exact match", snapshot: exact)
-                }
-
-                if let anywhere = history.variationAnywhere,
-                   anywhere.id != history.exact?.id {
-                    DetailedHistorySnapshotCard(title: "Last variation anywhere", snapshot: anywhere)
-                }
-
-                if !history.movementMatches.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Other Variations")
-                            .font(.headline)
-                            .foregroundStyle(AppTheme.textSecondary)
-                        Text("Recent sessions for this movement using a different variation.")
-                            .font(.subheadline)
-                            .foregroundStyle(AppTheme.textMuted)
-
-                        ForEach(history.movementMatches) { snapshot in
-                            MovementHistoryCard(snapshot: snapshot)
-                        }
-                    }
-                }
-            }
+            SelectedHistoryBrowser(
+                displaySnapshots: browserDisplaySnapshots,
+                totalCount: browserTotalCount,
+                displayIndex: browserDisplayIndex,
+                onAdvanceSnapshot: onAdvanceBrowserSnapshot
+            )
         }
     }
 }
 
-private struct HistoryOverviewGrid: View {
-    let history: HistoryResult
+private struct LastExactMatchRecommendationCard: View {
+    let session: WorkoutSession
+    let entry: WorkoutExerciseEntry
+    let snapshot: HistorySnapshot?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let snapshot {
+                Text(entry.performedVariationNameSnapshot)
+                    .font(.title2.bold())
+                    .foregroundStyle(AppTheme.textPrimary)
+                Text("\(session.locationNameSnapshot) • \(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))")
+                    .foregroundStyle(AppTheme.textSecondary)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(snapshot.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
+                        HistorySetRow(set: set)
+                    }
+                }
+            } else {
+                Text("No exact match yet")
+                    .font(.title3.bold())
+                    .foregroundStyle(AppTheme.textPrimary)
+                Text("You have not logged this variation at this gym before.")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.textSecondary)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(AppTheme.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .strokeBorder(AppTheme.accent.opacity(snapshot == nil ? 0.12 : 0.38), lineWidth: 1.5)
+                )
+        )
+    }
+}
+
+private struct HistoryExplorerControls: View {
+    let variationItems: [VariationDeckCardItem]
+    let locationItems: [LocationHistorySelectorItem]
+    let onAdvanceVariation: () -> Void
+    let onAdvanceLocation: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Explore History")
+                .font(.headline)
+                .foregroundStyle(AppTheme.textSecondary)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    variationSelector
+                        .frame(maxWidth: .infinity)
+                    locationSelector
+                        .frame(maxWidth: .infinity)
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    variationSelector
+                    locationSelector
+                }
+            }
+        }
+    }
+
+    private var variationSelector: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Variation")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(AppTheme.textMuted)
+
+            if variationItems.isEmpty {
+                compactEmptyCard(message: "No variations")
+            } else {
+                RotatingSwipeDeck(
+                    items: variationItems,
+                    configuration: .historyExplorerCompact,
+                    onAdvance: { _ in onAdvanceVariation() }
+                ) { item in
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.variation.name)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppTheme.textPrimary)
+                                .lineLimit(2)
+                            if let equipmentCategory = item.variation.equipmentCategory {
+                                Text(equipmentCategory.displayName)
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.textSecondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                    }
+                }
+                .frame(height: 118)
+            }
+        }
+    }
+
+    private var locationSelector: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Gym")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(AppTheme.textMuted)
+
+            if locationItems.isEmpty {
+                compactEmptyCard(message: "No gyms")
+            } else {
+                RotatingSwipeDeck(
+                    items: locationItems,
+                    configuration: .historyExplorerCompact,
+                    onAdvance: { _ in onAdvanceLocation() }
+                ) { item in
+                    SurfaceCard {
+                        Text(item.location.name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppTheme.textPrimary)
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                    }
+                }
+                .frame(height: 118)
+            }
+        }
+    }
+
+    private func compactEmptyCard(message: String) -> some View {
+        SurfaceCard {
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(AppTheme.textMuted)
+                .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
+        }
+    }
+}
+
+private struct SelectedHistoryBrowser: View {
+    let displaySnapshots: [HistorySnapshot]
+    let totalCount: Int
+    let displayIndex: Int
+    let onAdvanceSnapshot: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Overview")
+            Text("Selected History")
                 .font(.headline)
                 .foregroundStyle(AppTheme.textSecondary)
-            HStack(spacing: 12) {
-                HistoryOverviewMetricCard(title: "This Gym", snapshot: history.exact)
-                HistoryOverviewMetricCard(title: "Any Gym", snapshot: history.variationAnywhere)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
 
-private struct HistoryOverviewMetricCard: View {
-    let title: String
-    let snapshot: HistorySnapshot?
-
-    var body: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(AppTheme.textMuted)
-
-                if let snapshot {
-                    Text(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.textSecondary)
-                    Text(snapshot.summary.isEmpty ? "—" : snapshot.summary)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AppTheme.textPrimary)
-                        .lineLimit(2)
-                } else {
-                    Text("No match")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AppTheme.textMuted)
+            if totalCount == 0 {
+                SurfaceCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("No history for this combo")
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.textPrimary)
+                        Text("Try another variation or gym.")
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
+            } else {
+                RotatingSwipeDeck(
+                    items: displaySnapshots,
+                    configuration: .historyBrowserDeck,
+                    onAdvance: { _ in onAdvanceSnapshot() }
+                ) { snapshot in
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text(snapshot.variationName)
+                                    .font(.title3.bold())
+                                    .foregroundStyle(AppTheme.textPrimary)
+                                Spacer()
+                                Text("\(displayIndex) of \(totalCount)")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(AppTheme.textMuted)
+                            }
+                            Text("\(snapshot.locationName) • \(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.textSecondary)
 
-private struct HistoryEmptyStateCard: View {
-    var body: some View {
-        SurfaceCard {
-            VStack(spacing: 14) {
-                Image(systemName: "clock.badge.questionmark")
-                    .font(.title)
-                    .foregroundStyle(AppTheme.textMuted)
-
-                Text("No history yet")
-                    .font(.headline)
-                    .foregroundStyle(AppTheme.textPrimary)
-
-                Text("Complete this movement once and your previous sets will appear here.")
-                    .font(.subheadline)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-        }
-    }
-}
-
-private struct DetailedHistorySnapshotCard: View {
-    let title: String
-    let snapshot: HistorySnapshot?
-
-    var body: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 14) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(AppTheme.textSecondary)
-
-                if let snapshot {
-                    Text(snapshot.variationName)
-                        .font(.title3.bold())
-                        .foregroundStyle(AppTheme.textPrimary)
-
-                    Text(snapshot.locationName)
-                        .foregroundStyle(AppTheme.textSecondary)
-
-                    Text(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.textMuted)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(snapshot.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
-                            HistorySetRow(set: set)
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(snapshot.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
+                                    HistorySetRow(set: set)
+                                }
+                            }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                .frame(height: 280)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+private extension RotatingSwipeDeckConfiguration {
+    static var historyExplorerCompact: RotatingSwipeDeckConfiguration {
+        var cfg = RotatingSwipeDeckConfiguration.default
+        cfg.introHintEnabled = false
+        cfg.horizontalInset = 14
+        cfg.stackSpacing = 8
+        cfg.visibleCount = 2
+        cfg.minimumCardWidth = 100
+        cfg.showsSideCues = false
+        return cfg
+    }
+
+    static var historyBrowserDeck: RotatingSwipeDeckConfiguration {
+        var cfg = RotatingSwipeDeckConfiguration.default
+        cfg.introHintEnabled = false
+        cfg.horizontalInset = 22
+        return cfg
     }
 }
 
@@ -910,45 +1165,16 @@ private struct HistorySetRow: View {
     }
 }
 
-private struct MovementHistoryCard: View {
-    let snapshot: HistorySnapshot
-
-    var body: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(snapshot.variationName)
-                    .font(.headline)
-                    .foregroundStyle(AppTheme.textPrimary)
-                Text("\(snapshot.locationName) • \(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.textSecondary)
-                Text(snapshot.summary)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppTheme.textPrimary)
-                    .lineLimit(3)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
 private struct VariationDeckCardItem: Identifiable, Equatable {
     let variation: Variation
 
     var id: UUID { variation.id }
 }
 
-private struct HistoryLocationDeckItem: Identifiable, Equatable {
+private struct LocationHistorySelectorItem: Identifiable, Equatable {
     let location: Location
-    let title: String
-    let snapshot: HistorySnapshot?
 
     var id: UUID { location.id }
-}
-
-private struct LabeledHistory {
-    let title: String
-    let snapshot: HistorySnapshot?
 }
 
 private func orderedIDs(
@@ -968,62 +1194,6 @@ private func orderedIDs(
     }
 
     return merged
-}
-
-/// Swipe deck has one card per gym; only `exact` (same variation at that gym) should appear on that card.
-private func primaryHistoryForLocationDeck(from history: HistoryResult) -> LabeledHistory {
-    if let snapshot = history.exact {
-        return LabeledHistory(title: "Last at this gym", snapshot: snapshot)
-    }
-    return LabeledHistory(title: "Last at this gym", snapshot: nil)
-}
-
-private struct GymHistoryDeckSection: View {
-    let items: [HistoryLocationDeckItem]
-    let onAdvanceLocation: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Gym History")
-                .font(.headline)
-                .foregroundStyle(AppTheme.textSecondary)
-            RotatingSwipeDeck(items: items, onAdvance: { _ in
-                onAdvanceLocation()
-            }) { item in
-                SurfaceCard {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(item.location.name)
-                            .font(.headline)
-                            .foregroundStyle(AppTheme.textPrimary)
-                        Text(item.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AppTheme.textSecondary)
-
-                        if let snapshot = item.snapshot {
-                            HStack(alignment: .center, spacing: 8) {
-                                Text(snapshot.variationName)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(AppTheme.textPrimary)
-                                    .lineLimit(2)
-                                Spacer(minLength: 8)
-                                StatusPill(title: "Exact Match", color: AppTheme.accentSecondary)
-                            }
-                            Text(snapshot.summary)
-                                .foregroundStyle(AppTheme.textPrimary)
-                                .lineLimit(4)
-                            Text(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))
-                                .foregroundStyle(AppTheme.textMuted)
-                        } else {
-                            Text("No matching history yet.")
-                                .foregroundStyle(AppTheme.textMuted)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 150, alignment: .leading)
-                }
-            }
-            .frame(height: 200)
-        }
-    }
 }
 
 private struct SetRecordingFlagsRow: View {

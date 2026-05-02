@@ -14,7 +14,28 @@ struct HistoryQueryService {
         excluding sessionId: UUID?,
         in sessions: [WorkoutSession]
     ) -> HistoryResult {
-        let snapshots = sessions
+        let snapshots = completedSnapshots(excluding: sessionId, in: sessions)
+
+        let exact = snapshots.first { $0.variationId == variationId && $0.locationId == currentLocationId }
+        let variationAnywhere = snapshots.first { $0.variationId == variationId }
+        let movementMatches = snapshots.filter { $0.variationId != variationId && sessionMovementId(for: $0, in: sessions) == movementId }
+
+        return HistoryResult(exact: exact, variationAnywhere: variationAnywhere, movementMatches: Array(movementMatches.prefix(3)))
+    }
+
+    func snapshots(
+        variationId: UUID,
+        locationId: UUID,
+        excluding sessionId: UUID?,
+        in sessions: [WorkoutSession]
+    ) -> [HistorySnapshot] {
+        completedSnapshots(excluding: sessionId, in: sessions).filter {
+            $0.variationId == variationId && $0.locationId == locationId
+        }
+    }
+
+    private func completedSnapshots(excluding sessionId: UUID?, in sessions: [WorkoutSession]) -> [HistorySnapshot] {
+        sessions
             .filter { $0.id != sessionId }
             .filter { $0.status == .completed }
             .flatMap { session in
@@ -34,12 +55,6 @@ struct HistoryQueryService {
                 }
             }
             .sorted { $0.sessionDate > $1.sessionDate }
-
-        let exact = snapshots.first { $0.variationId == variationId && $0.locationId == currentLocationId }
-        let variationAnywhere = snapshots.first { $0.variationId == variationId }
-        let movementMatches = snapshots.filter { $0.variationId != variationId && sessionMovementId(for: $0, in: sessions) == movementId }
-
-        return HistoryResult(exact: exact, variationAnywhere: variationAnywhere, movementMatches: Array(movementMatches.prefix(3)))
     }
 
     private func sessionMovementId(for snapshot: HistorySnapshot, in sessions: [WorkoutSession]) -> UUID? {
@@ -51,4 +66,3 @@ struct HistoryQueryService {
             .performedMovementId
     }
 }
-
