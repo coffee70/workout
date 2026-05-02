@@ -123,13 +123,25 @@ struct StartWorkoutView: View {
                         ContentUnavailableView("No Locations", systemImage: "mappin.and.ellipse", description: Text("Add a location in Library before starting a workout."))
                     } else {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(store.activeLocations.count > 1 ? "Swipe a card away to cycle gyms." : "Your workout will use this gym.")
-                                .foregroundStyle(AppTheme.textMuted)
+                            if store.activeLocations.count == 1 {
+                                Text("Your workout will use this gym.")
+                                    .foregroundStyle(AppTheme.textMuted)
+                            }
 
-                            RotatingSwipeDeck(items: orderedLocations, onAdvance: { _ in
-                                guard !store.activeLocations.isEmpty else { return }
-                                selectedLocationIndex = (selectedLocationIndex + 1) % store.activeLocations.count
-                            }) { location in
+                            TapCardPager(
+                                items: orderedLocations,
+                                deckBadge: store.activeLocations.count > 1
+                                    ? TapCardDeckBadge(oneBasedPosition: selectedLocationIndex + 1, total: store.activeLocations.count)
+                                    : nil,
+                                onAdvance: { _ in
+                                    guard !store.activeLocations.isEmpty else { return }
+                                    selectedLocationIndex = (selectedLocationIndex + 1) % store.activeLocations.count
+                                },
+                                onRetreat: { _ in
+                                    guard !store.activeLocations.isEmpty else { return }
+                                    selectedLocationIndex = (selectedLocationIndex - 1 + store.activeLocations.count) % store.activeLocations.count
+                                }
+                            ) { location in
                                 SurfaceCard {
                                     VStack(alignment: .leading, spacing: 10) {
                                         Text(location.name)
@@ -140,7 +152,6 @@ struct StartWorkoutView: View {
                                     }
                                     .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
                                 }
-                                .padding(.horizontal, 4)
                             }
                             .frame(height: 220)
                         }

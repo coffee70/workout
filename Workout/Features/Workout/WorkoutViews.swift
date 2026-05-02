@@ -329,8 +329,12 @@ struct ExerciseLoggingView: View {
                             session: session,
                             entry: entry,
                             variationDeckItems: variationDeckItems,
+                            variationDeckBadge: variationDeckBadge(for: entry, store: store),
                             onVariationAdvance: {
-                                store.advanceVariation(sessionId: session.id, entryId: entry.id)
+                                store.cycleVariation(sessionId: session.id, entryId: entry.id, direction: 1)
+                            },
+                            onVariationRetreat: {
+                                store.cycleVariation(sessionId: session.id, entryId: entry.id, direction: -1)
                             },
                             onStartEditingSet: { setId, field, initialValue in
                                 startEditing(setId: setId, field: field, initialValue: initialValue)
@@ -389,19 +393,30 @@ struct ExerciseLoggingView: View {
                             lastExactSnapshot: lastExactAtWorkoutGym,
                             explorerVariationItems: explorerVariationItems,
                             explorerLocationItems: explorerLocationItems,
+                            explorerVariationDeckBadge: explorerVariationDeckBadge(session: session, entry: entry),
+                            explorerLocationDeckBadge: explorerLocationDeckBadge(session: session),
                             browserDisplaySnapshots: rotatedBrowserSnapshots,
                             browserTotalCount: browserSnapshots.count,
                             browserDisplayIndex: browserSnapshots.isEmpty
                                 ? 0
                                 : (selectedHistorySnapshotIndex % browserSnapshots.count) + 1,
                             onAdvanceExplorerVariation: {
-                                advanceHistoryExplorerVariation(entry: entry)
+                                moveHistoryExplorerVariation(entry: entry, direction: 1)
+                            },
+                            onRetreatExplorerVariation: {
+                                moveHistoryExplorerVariation(entry: entry, direction: -1)
                             },
                             onAdvanceExplorerLocation: {
-                                advanceHistoryExplorerLocation(session: session)
+                                moveHistoryExplorerLocation(session: session, direction: 1)
+                            },
+                            onRetreatExplorerLocation: {
+                                moveHistoryExplorerLocation(session: session, direction: -1)
                             },
                             onAdvanceBrowserSnapshot: {
-                                advanceHistorySnapshotBrowser(count: browserSnapshots.count)
+                                moveHistorySnapshotBrowser(count: browserSnapshots.count, direction: 1)
+                            },
+                            onRetreatBrowserSnapshot: {
+                                moveHistorySnapshotBrowser(count: browserSnapshots.count, direction: -1)
                             }
                         )
                     }
@@ -502,7 +517,7 @@ struct ExerciseLoggingView: View {
         return order.compactMap { locationsByID[$0].map(LocationHistorySelectorItem.init) }
     }
 
-    private func advanceHistoryExplorerVariation(entry: WorkoutExerciseEntry) {
+    private func moveHistoryExplorerVariation(entry: WorkoutExerciseEntry, direction: Int) {
         let variations = store.variations(for: entry.performedMovementId)
         guard !variations.isEmpty else { return }
 
@@ -511,12 +526,14 @@ struct ExerciseLoggingView: View {
             preferredOrder: [],
             fallbackCurrentID: resolvedHistoryExplorerVariationId(entry: entry)
         )
-        let next = ids.count == 1 ? ids[0] : ids[1]
-        selectedHistoryVariationId = next
+        let currentIndex = ids.firstIndex(of: resolvedHistoryExplorerVariationId(entry: entry)) ?? 0
+        let nextIndex = (currentIndex + direction + ids.count) % ids.count
+
+        selectedHistoryVariationId = ids[nextIndex]
         selectedHistorySnapshotIndex = 0
     }
 
-    private func advanceHistoryExplorerLocation(session: WorkoutSession) {
+    private func moveHistoryExplorerLocation(session: WorkoutSession, direction: Int) {
         let locations = store.activeLocations
         guard !locations.isEmpty else { return }
 
@@ -525,14 +542,39 @@ struct ExerciseLoggingView: View {
             preferredOrder: [],
             fallbackCurrentID: resolvedHistoryExplorerLocationId(session: session)
         )
-        let next = ids.count == 1 ? ids[0] : ids[1]
-        selectedHistoryLocationId = next
+        let currentIndex = ids.firstIndex(of: resolvedHistoryExplorerLocationId(session: session)) ?? 0
+        let nextIndex = (currentIndex + direction + ids.count) % ids.count
+
+        selectedHistoryLocationId = ids[nextIndex]
         selectedHistorySnapshotIndex = 0
     }
 
-    private func advanceHistorySnapshotBrowser(count: Int) {
+    private func moveHistorySnapshotBrowser(count: Int, direction: Int) {
         guard count > 0 else { return }
-        selectedHistorySnapshotIndex = (selectedHistorySnapshotIndex + 1) % count
+        selectedHistorySnapshotIndex = (selectedHistorySnapshotIndex + direction + count) % count
+    }
+
+    private func variationDeckBadge(for entry: WorkoutExerciseEntry, store: AppStore) -> TapCardDeckBadge? {
+        let variations = store.variations(for: entry.performedMovementId)
+        guard variations.count > 1 else { return nil }
+        let index = variations.firstIndex { $0.id == entry.performedVariationId } ?? 0
+        return TapCardDeckBadge(oneBasedPosition: index + 1, total: variations.count)
+    }
+
+    private func explorerVariationDeckBadge(session: WorkoutSession, entry: WorkoutExerciseEntry) -> TapCardDeckBadge? {
+        let variations = store.variations(for: entry.performedMovementId)
+        guard variations.count > 1 else { return nil }
+        let id = resolvedHistoryExplorerVariationId(entry: entry)
+        let index = variations.firstIndex { $0.id == id } ?? 0
+        return TapCardDeckBadge(oneBasedPosition: index + 1, total: variations.count)
+    }
+
+    private func explorerLocationDeckBadge(session: WorkoutSession) -> TapCardDeckBadge? {
+        let locations = store.activeLocations
+        guard locations.count > 1 else { return nil }
+        let id = resolvedHistoryExplorerLocationId(session: session)
+        let index = locations.firstIndex { $0.id == id } ?? 0
+        return TapCardDeckBadge(oneBasedPosition: index + 1, total: locations.count)
     }
 
     private func startEditing(setId: UUID, field: EditingField, initialValue: String) {
@@ -677,7 +719,9 @@ private struct ExerciseLogTabContent: View {
     let session: WorkoutSession
     let entry: WorkoutExerciseEntry
     let variationDeckItems: [VariationDeckCardItem]
+    let variationDeckBadge: TapCardDeckBadge?
     let onVariationAdvance: () -> Void
+    let onVariationRetreat: () -> Void
     let onStartEditingSet: (UUID, ExerciseLoggingView.EditingField, String) -> Void
     let onScrubActiveChange: (Bool) -> Void
     let onUpdateSetWeight: (UUID, Double) -> Void
@@ -735,9 +779,12 @@ private struct ExerciseLogTabContent: View {
                     }
                 }
 
-                RotatingSwipeDeck(items: variationDeckItems, onAdvance: { _ in
-                    onVariationAdvance()
-                }) { item in
+                TapCardPager(
+                    items: variationDeckItems,
+                    deckBadge: variationDeckBadge,
+                    onAdvance: { _ in onVariationAdvance() },
+                    onRetreat: { _ in onVariationRetreat() }
+                ) { item in
                     SurfaceCard {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .top) {
@@ -899,12 +946,17 @@ private struct ExerciseHistoryTabContent: View {
     let lastExactSnapshot: HistorySnapshot?
     let explorerVariationItems: [VariationDeckCardItem]
     let explorerLocationItems: [LocationHistorySelectorItem]
+    let explorerVariationDeckBadge: TapCardDeckBadge?
+    let explorerLocationDeckBadge: TapCardDeckBadge?
     let browserDisplaySnapshots: [HistorySnapshot]
     let browserTotalCount: Int
     let browserDisplayIndex: Int
     let onAdvanceExplorerVariation: () -> Void
+    let onRetreatExplorerVariation: () -> Void
     let onAdvanceExplorerLocation: () -> Void
+    let onRetreatExplorerLocation: () -> Void
     let onAdvanceBrowserSnapshot: () -> Void
+    let onRetreatBrowserSnapshot: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -916,16 +968,21 @@ private struct ExerciseHistoryTabContent: View {
 
             HistoryExplorerControls(
                 variationItems: explorerVariationItems,
+                variationDeckBadge: explorerVariationDeckBadge,
                 locationItems: explorerLocationItems,
+                locationDeckBadge: explorerLocationDeckBadge,
                 onAdvanceVariation: onAdvanceExplorerVariation,
-                onAdvanceLocation: onAdvanceExplorerLocation
+                onRetreatVariation: onRetreatExplorerVariation,
+                onAdvanceLocation: onAdvanceExplorerLocation,
+                onRetreatLocation: onRetreatExplorerLocation
             )
 
             SelectedHistoryBrowser(
                 displaySnapshots: browserDisplaySnapshots,
                 totalCount: browserTotalCount,
                 displayIndex: browserDisplayIndex,
-                onAdvanceSnapshot: onAdvanceBrowserSnapshot
+                onAdvanceSnapshot: onAdvanceBrowserSnapshot,
+                onRetreatSnapshot: onRetreatBrowserSnapshot
             )
         }
     }
@@ -974,9 +1031,13 @@ private struct LastExactMatchRecommendationCard: View {
 
 private struct HistoryExplorerControls: View {
     let variationItems: [VariationDeckCardItem]
+    let variationDeckBadge: TapCardDeckBadge?
     let locationItems: [LocationHistorySelectorItem]
+    let locationDeckBadge: TapCardDeckBadge?
     let onAdvanceVariation: () -> Void
+    let onRetreatVariation: () -> Void
     let onAdvanceLocation: () -> Void
+    let onRetreatLocation: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -984,17 +1045,11 @@ private struct HistoryExplorerControls: View {
                 .font(.headline)
                 .foregroundStyle(AppTheme.textSecondary)
 
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 12) {
-                    variationSelector
-                        .frame(maxWidth: .infinity)
-                    locationSelector
-                        .frame(maxWidth: .infinity)
-                }
-                VStack(alignment: .leading, spacing: 12) {
-                    variationSelector
-                    locationSelector
-                }
+            VStack(alignment: .leading, spacing: 12) {
+                variationSelector
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                locationSelector
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -1008,17 +1063,18 @@ private struct HistoryExplorerControls: View {
             if variationItems.isEmpty {
                 compactEmptyCard(message: "No variations")
             } else {
-                RotatingSwipeDeck(
+                TapCardPager(
                     items: variationItems,
-                    configuration: .historyExplorerCompact,
-                    onAdvance: { _ in onAdvanceVariation() }
+                    deckBadge: variationDeckBadge,
+                    onAdvance: { _ in onAdvanceVariation() },
+                    onRetreat: { _ in onRetreatVariation() }
                 ) { item in
                     SurfaceCard {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(item.variation.name)
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(AppTheme.textPrimary)
-                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
                             if let equipmentCategory = item.variation.equipmentCategory {
                                 Text(equipmentCategory.displayName)
                                     .font(.caption)
@@ -1028,7 +1084,7 @@ private struct HistoryExplorerControls: View {
                         .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                     }
                 }
-                .frame(height: 118)
+                .frame(minHeight: 118)
             }
         }
     }
@@ -1042,20 +1098,21 @@ private struct HistoryExplorerControls: View {
             if locationItems.isEmpty {
                 compactEmptyCard(message: "No gyms")
             } else {
-                RotatingSwipeDeck(
+                TapCardPager(
                     items: locationItems,
-                    configuration: .historyExplorerCompact,
-                    onAdvance: { _ in onAdvanceLocation() }
+                    deckBadge: locationDeckBadge,
+                    onAdvance: { _ in onAdvanceLocation() },
+                    onRetreat: { _ in onRetreatLocation() }
                 ) { item in
                     SurfaceCard {
                         Text(item.location.name)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(AppTheme.textPrimary)
-                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                     }
                 }
-                .frame(height: 118)
+                .frame(minHeight: 118)
             }
         }
     }
@@ -1075,6 +1132,7 @@ private struct SelectedHistoryBrowser: View {
     let totalCount: Int
     let displayIndex: Int
     let onAdvanceSnapshot: () -> Void
+    let onRetreatSnapshot: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1095,22 +1153,17 @@ private struct SelectedHistoryBrowser: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                RotatingSwipeDeck(
+                TapCardPager(
                     items: displaySnapshots,
-                    configuration: .historyBrowserDeck,
-                    onAdvance: { _ in onAdvanceSnapshot() }
+                    deckBadge: totalCount > 1 ? TapCardDeckBadge(oneBasedPosition: displayIndex, total: totalCount) : nil,
+                    onAdvance: { _ in onAdvanceSnapshot() },
+                    onRetreat: { _ in onRetreatSnapshot() }
                 ) { snapshot in
                     SurfaceCard {
                         VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text(snapshot.variationName)
-                                    .font(.title3.bold())
-                                    .foregroundStyle(AppTheme.textPrimary)
-                                Spacer()
-                                Text("\(displayIndex) of \(totalCount)")
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(AppTheme.textMuted)
-                            }
+                            Text(snapshot.variationName)
+                                .font(.title3.bold())
+                                .foregroundStyle(AppTheme.textPrimary)
                             Text("\(snapshot.locationName) • \(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))")
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.textSecondary)
@@ -1124,29 +1177,9 @@ private struct SelectedHistoryBrowser: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .frame(height: 280)
+                .frame(maxWidth: .infinity, minHeight: 280, alignment: .top)
             }
         }
-    }
-}
-
-private extension RotatingSwipeDeckConfiguration {
-    static var historyExplorerCompact: RotatingSwipeDeckConfiguration {
-        var cfg = RotatingSwipeDeckConfiguration.default
-        cfg.introHintEnabled = false
-        cfg.horizontalInset = 14
-        cfg.stackSpacing = 8
-        cfg.visibleCount = 2
-        cfg.minimumCardWidth = 100
-        cfg.showsSideCues = false
-        return cfg
-    }
-
-    static var historyBrowserDeck: RotatingSwipeDeckConfiguration {
-        var cfg = RotatingSwipeDeckConfiguration.default
-        cfg.introHintEnabled = false
-        cfg.horizontalInset = 22
-        return cfg
     }
 }
 
