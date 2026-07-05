@@ -6,9 +6,20 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		5253D3792F844261009FC577 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5253D3492F844261009FC577 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5253D3502F844261009FC577;
+			remoteInfo = Workout;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		5253D3512F844261009FC577 /* Workout.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Workout.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5253D3612F844261009FC577 /* TargetSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = TargetSigning.xcconfig; sourceTree = "<group>"; };
+		5253D3712F844261009FC577 /* WorkoutTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WorkoutTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -17,10 +28,22 @@
 			path = Workout;
 			sourceTree = "<group>";
 		};
+		5253D3722F844261009FC577 /* WorkoutTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = WorkoutTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		5253D34E2F844261009FC577 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5253D3742F844261009FC577 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -34,6 +57,7 @@
 			isa = PBXGroup;
 			children = (
 				5253D3532F844261009FC577 /* Workout */,
+				5253D3722F844261009FC577 /* WorkoutTests */,
 				5253D3612F844261009FC577 /* TargetSigning.xcconfig */,
 				5253D3522F844261009FC577 /* Products */,
 			);
@@ -43,6 +67,7 @@
 			isa = PBXGroup;
 			children = (
 				5253D3512F844261009FC577 /* Workout.app */,
+				5253D3712F844261009FC577 /* WorkoutTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -72,6 +97,29 @@
 			productReference = 5253D3512F844261009FC577 /* Workout.app */;
 			productType = "com.apple.product-type.application";
 		};
+		5253D3702F844261009FC577 /* WorkoutTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5253D3762F844261009FC577 /* Build configuration list for PBXNativeTarget "WorkoutTests" */;
+			buildPhases = (
+				5253D3732F844261009FC577 /* Sources */,
+				5253D3742F844261009FC577 /* Frameworks */,
+				5253D3752F844261009FC577 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5253D37A2F844261009FC577 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5253D3722F844261009FC577 /* WorkoutTests */,
+			);
+			name = WorkoutTests;
+			packageProductDependencies = (
+			);
+			productName = WorkoutTests;
+			productReference = 5253D3712F844261009FC577 /* WorkoutTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -84,6 +132,10 @@
 				TargetAttributes = {
 					5253D3502F844261009FC577 = {
 						CreatedOnToolsVersion = 26.4;
+					};
+					5253D3702F844261009FC577 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = 5253D3502F844261009FC577;
 					};
 				};
 			};
@@ -102,12 +154,20 @@
 			projectRoot = "";
 			targets = (
 				5253D3502F844261009FC577 /* Workout */,
+				5253D3702F844261009FC577 /* WorkoutTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		5253D34F2F844261009FC577 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5253D3752F844261009FC577 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -124,7 +184,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5253D3732F844261009FC577 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5253D37A2F844261009FC577 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5253D3502F844261009FC577 /* Workout */;
+			targetProxy = 5253D3792F844261009FC577 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		5253D35A2F844268009FC577 /* Debug */ = {
@@ -254,8 +329,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3Z97SQ2PTA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -270,6 +347,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Evan.Workout;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -286,8 +364,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3Z97SQ2PTA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -302,6 +382,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Evan.Workout;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -309,6 +390,49 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		5253D3772F844261009FC577 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3Z97SQ2PTA;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Evan.WorkoutTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Workout.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Workout";
+				WRAPPER_EXTENSION = xctest;
+			};
+			name = Debug;
+		};
+		5253D3782F844261009FC577 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3Z97SQ2PTA;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Evan.WorkoutTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Workout.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Workout";
+				WRAPPER_EXTENSION = xctest;
 			};
 			name = Release;
 		};
@@ -329,6 +453,15 @@
 			buildConfigurations = (
 				5253D35D2F844268009FC577 /* Debug */,
 				5253D35E2F844268009FC577 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5253D3762F844261009FC577 /* Build configuration list for PBXNativeTarget "WorkoutTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5253D3772F844261009FC577 /* Debug */,
+				5253D3782F844261009FC577 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

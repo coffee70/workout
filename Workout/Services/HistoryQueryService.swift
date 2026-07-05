@@ -34,6 +34,20 @@ struct HistoryQueryService {
         }
     }
 
+    func graphSnapshots(
+        movementId: UUID,
+        variationId: UUID,
+        locationId: UUID,
+        excluding sessionId: UUID?,
+        in sessions: [WorkoutSession]
+    ) -> [HistorySnapshot] {
+        completedSnapshots(excluding: sessionId, in: sessions).filter {
+            $0.movementId == movementId &&
+            $0.variationId == variationId &&
+            $0.locationId == locationId
+        }
+    }
+
     private func completedSnapshots(excluding sessionId: UUID?, in sessions: [WorkoutSession]) -> [HistorySnapshot] {
         sessions
             .filter { $0.id != sessionId }
@@ -47,6 +61,7 @@ struct HistoryQueryService {
                         sessionDate: session.date,
                         locationId: session.locationId,
                         locationName: session.locationNameSnapshot,
+                        movementId: entry.performedMovementId,
                         movementName: entry.performedMovementNameSnapshot,
                         variationId: entry.performedVariationId,
                         variationName: entry.performedVariationNameSnapshot,

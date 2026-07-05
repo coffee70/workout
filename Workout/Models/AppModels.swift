@@ -381,6 +381,7 @@ nonisolated struct HistorySnapshot: Identifiable, Hashable {
     let sessionDate: Date
     let locationId: UUID
     let locationName: String
+    let movementId: UUID
     let movementName: String
     let variationId: UUID
     let variationName: String

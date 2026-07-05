@@ -246,6 +246,7 @@ private struct WorkoutEntryCardContent: View {
 private enum ExerciseLoggingTab: String, CaseIterable, Identifiable, Hashable {
     case log
     case history
+    case graph
 
     var id: String { rawValue }
 
@@ -253,6 +254,7 @@ private enum ExerciseLoggingTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .log: return "Log"
         case .history: return "History"
+        case .graph: return "Graph"
         }
     }
 }
@@ -273,6 +275,10 @@ struct ExerciseLoggingView: View {
     @State private var selectedHistoryVariationId: UUID?
     @State private var selectedHistoryLocationId: UUID?
     @State private var selectedHistorySnapshotIndex: Int = 0
+    @State private var selectedGraphVariationId: UUID?
+    @State private var selectedGraphLocationId: UUID?
+    @State private var selectedGraphMetric: ExerciseProgressMetric = .reps
+    @State private var graphFiltersWereCustomized = false
 
     enum EditingField {
         case weight
@@ -316,6 +322,15 @@ struct ExerciseLoggingView: View {
             let rotatedBrowserSnapshots: [HistorySnapshot] = browserSnapshots.isEmpty
                 ? []
                 : browserSnapshots.rotated(startingAt: selectedHistorySnapshotIndex % browserSnapshots.count)
+            let graphVariationId = resolvedGraphVariationId(entry: entry)
+            let graphLocationId = resolvedGraphLocationId(session: session)
+            let graphSnapshots = store.progressGraphSnapshots(
+                movementId: entry.performedMovementId,
+                variationId: graphVariationId,
+                locationId: graphLocationId,
+                excluding: session.id
+            )
+            let graphSeries = ExerciseProgressGraphDataBuilder.series(from: graphSnapshots, metric: selectedGraphMetric)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -419,6 +434,30 @@ struct ExerciseLoggingView: View {
                                 moveHistorySnapshotBrowser(count: browserSnapshots.count, direction: -1)
                             }
                         )
+                    case .graph:
+                        WorkoutExerciseGraphTabContent(
+                            movementName: entry.performedMovementNameSnapshot,
+                            variationName: store.variationName(graphVariationId),
+                            locationName: store.locationName(graphLocationId),
+                            variationItems: graphVariationDeckItems(entry: entry),
+                            locationItems: graphLocationDeckItems(session: session),
+                            variationDeckBadge: graphVariationDeckBadge(entry: entry),
+                            locationDeckBadge: graphLocationDeckBadge(session: session),
+                            selectedMetric: $selectedGraphMetric,
+                            graphSeries: graphSeries,
+                            onAdvanceVariation: {
+                                moveGraphVariation(entry: entry, direction: 1)
+                            },
+                            onRetreatVariation: {
+                                moveGraphVariation(entry: entry, direction: -1)
+                            },
+                            onAdvanceLocation: {
+                                moveGraphLocation(session: session, direction: 1)
+                            },
+                            onRetreatLocation: {
+                                moveGraphLocation(session: session, direction: -1)
+                            }
+                        )
                     }
                 }
                 .padding()
@@ -428,6 +467,10 @@ struct ExerciseLoggingView: View {
                 selectedHistoryVariationId = nil
                 selectedHistoryLocationId = nil
                 selectedHistorySnapshotIndex = 0
+                if !graphFiltersWereCustomized {
+                    selectedGraphVariationId = nil
+                    selectedGraphLocationId = nil
+                }
             }
             .background(AppTheme.background.ignoresSafeArea())
             .sheet(isPresented: Binding(
@@ -554,6 +597,88 @@ struct ExerciseLoggingView: View {
         selectedHistorySnapshotIndex = (selectedHistorySnapshotIndex + direction + count) % count
     }
 
+    private func resolvedGraphVariationId(entry: WorkoutExerciseEntry) -> UUID {
+        let variations = store.variations(for: entry.performedMovementId)
+        guard let stored = selectedGraphVariationId else {
+            return entry.performedVariationId
+        }
+        if variations.contains(where: { $0.id == stored }) {
+            return stored
+        }
+        return entry.performedVariationId
+    }
+
+    private func resolvedGraphLocationId(session: WorkoutSession) -> UUID {
+        let locations = store.activeLocations
+        guard let stored = selectedGraphLocationId else {
+            return session.locationId
+        }
+        if locations.contains(where: { $0.id == stored }) {
+            return stored
+        }
+        return session.locationId
+    }
+
+    private func graphVariationDeckItems(entry: WorkoutExerciseEntry) -> [VariationDeckCardItem] {
+        let variations = store.variations(for: entry.performedMovementId)
+        guard !variations.isEmpty else { return [] }
+
+        let effective = resolvedGraphVariationId(entry: entry)
+        let order = orderedIDs(
+            currentIDs: variations.map(\.id),
+            preferredOrder: [],
+            fallbackCurrentID: effective
+        )
+        let variationsByID = Dictionary(uniqueKeysWithValues: variations.map { ($0.id, $0) })
+        return order.compactMap { variationsByID[$0].map(VariationDeckCardItem.init) }
+    }
+
+    private func graphLocationDeckItems(session: WorkoutSession) -> [LocationHistorySelectorItem] {
+        let locations = store.activeLocations
+        guard !locations.isEmpty else { return [] }
+
+        let effective = resolvedGraphLocationId(session: session)
+        let order = orderedIDs(
+            currentIDs: locations.map(\.id),
+            preferredOrder: [],
+            fallbackCurrentID: effective
+        )
+        let locationsByID = Dictionary(uniqueKeysWithValues: locations.map { ($0.id, $0) })
+        return order.compactMap { locationsByID[$0].map(LocationHistorySelectorItem.init) }
+    }
+
+    private func moveGraphVariation(entry: WorkoutExerciseEntry, direction: Int) {
+        let variations = store.variations(for: entry.performedMovementId)
+        guard !variations.isEmpty else { return }
+
+        let ids = orderedIDs(
+            currentIDs: variations.map(\.id),
+            preferredOrder: [],
+            fallbackCurrentID: resolvedGraphVariationId(entry: entry)
+        )
+        let currentIndex = ids.firstIndex(of: resolvedGraphVariationId(entry: entry)) ?? 0
+        let nextIndex = (currentIndex + direction + ids.count) % ids.count
+
+        selectedGraphVariationId = ids[nextIndex]
+        graphFiltersWereCustomized = true
+    }
+
+    private func moveGraphLocation(session: WorkoutSession, direction: Int) {
+        let locations = store.activeLocations
+        guard !locations.isEmpty else { return }
+
+        let ids = orderedIDs(
+            currentIDs: locations.map(\.id),
+            preferredOrder: [],
+            fallbackCurrentID: resolvedGraphLocationId(session: session)
+        )
+        let currentIndex = ids.firstIndex(of: resolvedGraphLocationId(session: session)) ?? 0
+        let nextIndex = (currentIndex + direction + ids.count) % ids.count
+
+        selectedGraphLocationId = ids[nextIndex]
+        graphFiltersWereCustomized = true
+    }
+
     private func variationDeckBadge(for entry: WorkoutExerciseEntry, store: AppStore) -> TapCardDeckBadge? {
         let variations = store.variations(for: entry.performedMovementId)
         guard variations.count > 1 else { return nil }
@@ -573,6 +698,22 @@ struct ExerciseLoggingView: View {
         let locations = store.activeLocations
         guard locations.count > 1 else { return nil }
         let id = resolvedHistoryExplorerLocationId(session: session)
+        let index = locations.firstIndex { $0.id == id } ?? 0
+        return TapCardDeckBadge(oneBasedPosition: index + 1, total: locations.count)
+    }
+
+    private func graphVariationDeckBadge(entry: WorkoutExerciseEntry) -> TapCardDeckBadge? {
+        let variations = store.variations(for: entry.performedMovementId)
+        guard variations.count > 1 else { return nil }
+        let id = resolvedGraphVariationId(entry: entry)
+        let index = variations.firstIndex { $0.id == id } ?? 0
+        return TapCardDeckBadge(oneBasedPosition: index + 1, total: variations.count)
+    }
+
+    private func graphLocationDeckBadge(session: WorkoutSession) -> TapCardDeckBadge? {
+        let locations = store.activeLocations
+        guard locations.count > 1 else { return nil }
+        let id = resolvedGraphLocationId(session: session)
         let index = locations.firstIndex { $0.id == id } ?? 0
         return TapCardDeckBadge(oneBasedPosition: index + 1, total: locations.count)
     }
@@ -694,7 +835,7 @@ private struct SegmentedExerciseTabPicker: UIViewRepresentable {
             action: #selector(Coordinator.valueChanged(_:)),
             for: .valueChanged
         )
-        control.accessibilityLabel = "Log or History"
+        control.accessibilityLabel = "Log, History, or Graph"
 
         let font = Self.titleFont()
         let host = SegmentPickerHostView(segmentedControl: control)
@@ -1196,37 +1337,6 @@ private struct HistorySetRow: View {
                 .foregroundStyle(AppTheme.textPrimary)
         }
     }
-}
-
-private struct VariationDeckCardItem: Identifiable, Equatable {
-    let variation: Variation
-
-    var id: UUID { variation.id }
-}
-
-private struct LocationHistorySelectorItem: Identifiable, Equatable {
-    let location: Location
-
-    var id: UUID { location.id }
-}
-
-private func orderedIDs(
-    currentIDs: [UUID],
-    preferredOrder: [UUID],
-    fallbackCurrentID: UUID
-) -> [UUID] {
-    guard !currentIDs.isEmpty else { return [] }
-
-    let currentIDSet = Set(currentIDs)
-    let filteredPreferred = preferredOrder.filter { currentIDSet.contains($0) }
-    let missingIDs = currentIDs.filter { !filteredPreferred.contains($0) }
-    let merged = filteredPreferred + missingIDs
-
-    if let currentIndex = merged.firstIndex(of: fallbackCurrentID) {
-        return merged.rotated(startingAt: currentIndex)
-    }
-
-    return merged
 }
 
 private struct SetRecordingFlagsRow: View {
