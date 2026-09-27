@@ -4,6 +4,7 @@ import SwiftUI
 enum ExerciseProgressMetric: String, CaseIterable, Identifiable {
     case reps
     case weight
+    case volume
 
     var id: String { rawValue }
 
@@ -11,6 +12,7 @@ enum ExerciseProgressMetric: String, CaseIterable, Identifiable {
         switch self {
         case .reps: return "Reps"
         case .weight: return "Weight"
+        case .volume: return "Volume"
         }
     }
 
@@ -18,6 +20,7 @@ enum ExerciseProgressMetric: String, CaseIterable, Identifiable {
         switch self {
         case .reps: return Double(set.reps)
         case .weight: return set.weight
+        case .volume: return Double(set.reps) * set.weight
         }
     }
 
@@ -25,7 +28,7 @@ enum ExerciseProgressMetric: String, CaseIterable, Identifiable {
         switch self {
         case .reps:
             return "\(Int(value.rounded()))"
-        case .weight:
+        case .weight, .volume:
             if value.rounded(.towardZero) == value {
                 return "\(Int(value))"
             }
@@ -39,6 +42,7 @@ struct ExerciseProgressGraphPoint: Identifiable, Hashable {
     let date: Date
     let value: Double
     let usedMachineOverload: Bool
+    var valueUnit: String = ""
 }
 
 struct ExerciseProgressGraphSeries: Identifiable, Hashable {
@@ -85,7 +89,8 @@ enum ExerciseProgressGraphDataBuilder {
                                 id: "\(snapshot.sessionId.uuidString)-\(set.id.uuidString)",
                                 date: snapshot.sessionDate,
                                 value: metric.value(for: set),
-                                usedMachineOverload: set.usedMachineOverload
+                                usedMachineOverload: set.usedMachineOverload,
+                                valueUnit: metric == .reps ? "reps" : (metric == .volume ? "\(set.weightUnit.displayName) × reps" : set.weightUnit.displayName)
                             )
                         )
                     }
@@ -106,6 +111,7 @@ struct ExerciseProgressGraph: View {
     var minimumChartHeight: CGFloat? = nil
     var showsSummary: Bool = true
 
+    @State private var selectedPointID: String?
     @State private var focusedSetNumber: Int?
 
     private var flattenedPoints: [ExerciseProgressGraphPoint] {
@@ -167,7 +173,56 @@ struct ExerciseProgressGraph: View {
                                 )
                             }
                             .opacity(opacity(for: line))
+                            .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                                if selectedPointID == point.id {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(point.date, format: .dateTime.month(.abbreviated).day().year())
+                                            .font(.caption)
+                                        Text("\(line.label) · \(metric.title): \(metric.formattedValue(point.value)) \(point.valueUnit)")
+                                            .font(.caption.weight(.semibold))
+                                        if point.usedMachineOverload {
+                                            Text("Machine overload").font(.caption)
+                                        }
+                                    }
+                                    .foregroundStyle(AppTheme.textPrimary)
+                                    .padding(10)
+                                    .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 12))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .strokeBorder(color(for: line).opacity(0.6), lineWidth: 1)
+                                    }
+                                    .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+                                    .allowsHitTesting(false)
+                                }
+                            }
                         }
+                    }
+                }
+                .chartOverlay { proxy in
+                    GeometryReader { geometry in
+                        Rectangle()
+                            .fill(.clear)
+                            .contentShape(Rectangle())
+                            .onTapGesture { location in
+                                guard let plotFrame = proxy.plotFrame else { return }
+                                let frame = geometry[plotFrame]
+                                guard frame.contains(location) else {
+                                    selectedPointID = nil
+                                    return
+                                }
+                                let candidates = series
+                                    .filter { focusedSetNumber == nil || $0.setNumber == focusedSetNumber }
+                                    .flatMap(\.points)
+                                let nearest = candidates.compactMap { point -> (String, CGFloat)? in
+                                    guard let x = proxy.position(forX: point.date),
+                                          let y = proxy.position(forY: point.value) else { return nil }
+                                    let distance = hypot(location.x - frame.minX - x, location.y - frame.minY - y)
+                                    return (point.id, distance)
+                                }.min { $0.1 < $1.1 }
+                                let tappedID = nearest.flatMap { $0.1 <= 32 ? $0.0 : nil }
+                                selectedPointID = selectedPointID == tappedID ? nil : tappedID
+                                if selectedPointID != nil { Haptics.light() }
+                            }
                     }
                 }
                 .chartYAxisLabel(metric.title)
@@ -231,6 +286,8 @@ struct ExerciseProgressGraph: View {
                     self.focusedSetNumber = nil
                 }
             }
+            .onChange(of: series) { _, _ in selectedPointID = nil }
+            .onChange(of: metric) { _, _ in selectedPointID = nil }
             .animation(.easeInOut(duration: 0.18), value: focusedSetNumber)
         }
     }
@@ -238,11 +295,12 @@ struct ExerciseProgressGraph: View {
     private var yAxisPadding: Double {
         switch metric {
         case .reps: return 2
-        case .weight: return max(5, maxValue * 0.08)
+        case .weight, .volume: return max(5, maxValue * 0.08)
         }
     }
 
     private func toggleFocus(_ setNumber: Int) {
+        selectedPointID = nil
         focusedSetNumber = focusedSetNumber == setNumber ? nil : setNumber
         Haptics.light()
     }

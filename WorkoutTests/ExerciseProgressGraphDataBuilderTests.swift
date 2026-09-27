@@ -106,6 +106,25 @@ final class ExerciseProgressGraphDataBuilderTests: XCTestCase {
         XCTAssertEqual(series[1].points.map(\.value), [100.5])
     }
 
+    func testVolumeSeriesUsesRepsTimesWeightValues() {
+        let snapshots = [
+            makeSnapshot(
+                sessionId: UUID(),
+                date: date(daysFromStart: 1),
+                sets: [
+                    makeSet(id: UUID(), setNumber: 1, reps: 8, weight: 95),
+                    makeSet(id: UUID(), setNumber: 2, reps: 6, weight: 100.5)
+                ]
+            )
+        ]
+
+        let series = ExerciseProgressGraphDataBuilder.series(from: snapshots, metric: .volume)
+
+        XCTAssertEqual(series.map(\.setNumber), [1, 2])
+        XCTAssertEqual(series[0].points.map(\.value), [760])
+        XCTAssertEqual(series[1].points.map(\.value), [603])
+    }
+
     func testSeriesPreservesMachineOverloadFlag() {
         let snapshots = [
             makeSnapshot(

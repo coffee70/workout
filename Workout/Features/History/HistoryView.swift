@@ -30,7 +30,8 @@ struct HistoryView: View {
             case .explorer:
                 Section {
                     HistoryMovementGraphExplorer()
-                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 16, trailing: 8))
                         .listRowBackground(Color.clear)
                 }
             case .sessions:
@@ -68,13 +69,118 @@ private struct HistoryTabSelector: View {
     @Binding var selectedTab: HistoryTab
 
     var body: some View {
-        Picker("History View", selection: $selectedTab) {
-            ForEach(HistoryTab.allCases) { tab in
-                Text(tab.title).tag(tab)
-            }
+        LargeHistoryTabPicker(selectedTab: $selectedTab)
+            .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 10)
+    }
+}
+
+private final class HistorySegmentPickerHostView: UIView {
+    let segmentedControl: UISegmentedControl
+    private var enforcedHeight: CGFloat = 52
+
+    init(segmentedControl: UISegmentedControl) {
+        self.segmentedControl = segmentedControl
+        super.init(frame: .zero)
+        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(segmentedControl)
+        NSLayoutConstraint.activate([
+            segmentedControl.leadingAnchor.constraint(equalTo: leadingAnchor),
+            segmentedControl.trailingAnchor.constraint(equalTo: trailingAnchor),
+            segmentedControl.topAnchor.constraint(equalTo: topAnchor),
+            segmentedControl.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func setEnforcedHeight(_ height: CGFloat) {
+        let rounded = ceil(height)
+        guard enforcedHeight != rounded else { return }
+        enforcedHeight = rounded
+        invalidateIntrinsicContentSize()
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: enforcedHeight)
+    }
+
+    static func minHeight(for font: UIFont) -> CGFloat {
+        let metrics = UIFontMetrics(forTextStyle: .title3)
+        let paddedLine = ceil(font.lineHeight + metrics.scaledValue(for: 18))
+        let floor = metrics.scaledValue(for: 52)
+        return max(floor, paddedLine)
+    }
+}
+
+private struct LargeHistoryTabPicker: UIViewRepresentable {
+    @Binding var selectedTab: HistoryTab
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    final class Coordinator: NSObject {
+        var parent: LargeHistoryTabPicker
+
+        init(_ parent: LargeHistoryTabPicker) {
+            self.parent = parent
         }
-        .pickerStyle(.segmented)
-        .accessibilityLabel("History Explorer or Sessions")
+
+        @objc func valueChanged(_ sender: UISegmentedControl) {
+            let cases = Array(HistoryTab.allCases)
+            let idx = sender.selectedSegmentIndex
+            guard idx >= 0, idx < cases.count else { return }
+            let next = cases[idx]
+            guard parent.selectedTab != next else { return }
+            parent.selectedTab = next
+        }
+    }
+
+    private static func titleFont() -> UIFont {
+        let base = UIFont.systemFont(ofSize: 20, weight: .semibold)
+        return UIFontMetrics(forTextStyle: .title3).scaledFont(for: base)
+    }
+
+    private static func applyTitleFont(to control: UISegmentedControl) {
+        let font = titleFont()
+        control.setTitleTextAttributes([.font: font], for: .normal)
+        control.setTitleTextAttributes([.font: font], for: .selected)
+    }
+
+    func makeUIView(context: Context) -> HistorySegmentPickerHostView {
+        let control = UISegmentedControl(items: HistoryTab.allCases.map(\.title))
+        Self.applyTitleFont(to: control)
+
+        control.selectedSegmentIndex = HistoryTab.allCases.firstIndex(of: selectedTab) ?? 0
+        control.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.valueChanged(_:)),
+            for: .valueChanged
+        )
+        control.accessibilityLabel = "History Explorer or Sessions"
+
+        let font = Self.titleFont()
+        let host = HistorySegmentPickerHostView(segmentedControl: control)
+        host.setEnforcedHeight(HistorySegmentPickerHostView.minHeight(for: font))
+        return host
+    }
+
+    func updateUIView(_ host: HistorySegmentPickerHostView, context: Context) {
+        Self.applyTitleFont(to: host.segmentedControl)
+
+        let font = Self.titleFont()
+        host.setEnforcedHeight(HistorySegmentPickerHostView.minHeight(for: font))
+
+        let idx = HistoryTab.allCases.firstIndex(of: selectedTab) ?? 0
+        if host.segmentedControl.selectedSegmentIndex != idx {
+            host.segmentedControl.selectedSegmentIndex = idx
+        }
     }
 }
 
@@ -143,15 +249,17 @@ private struct HistoryMovementGraphExplorer: View {
                     locationName: store.locationName(effectiveLocationId),
                     variationItems: variationItems(for: movement.id),
                     locationItems: locationItems(),
-                    variationDeckBadge: variationDeckBadge(for: movement.id),
-                    locationDeckBadge: locationDeckBadge(),
+                    selectedVariationId: effectiveVariationId ?? UUID(),
+                    selectedLocationId: effectiveLocationId ?? UUID(),
                     selectedMetric: $selectedMetric,
                     graphSeries: graphSeries,
                     graphEmptyMessage: "No graph history for this movement, variation, and gym yet.",
-                    onAdvanceVariation: { moveVariation(movementId: movement.id, direction: 1) },
-                    onRetreatVariation: { moveVariation(movementId: movement.id, direction: -1) },
-                    onAdvanceLocation: { moveLocation(movementId: movement.id, direction: 1) },
-                    onRetreatLocation: { moveLocation(movementId: movement.id, direction: -1) }
+                    onSelectVariation: { variationId in
+                        selectVariation(movementId: movement.id, variationId: variationId)
+                    },
+                    onSelectLocation: { locationId in
+                        selectedLocationId = locationId
+                    }
                 )
             } else {
                 SurfaceCard {
@@ -167,6 +275,7 @@ private struct HistoryMovementGraphExplorer: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear(perform: ensureValidSelection)
         .onChange(of: store.activeMovements.map(\.id)) { _, _ in ensureValidSelection() }
         .onChange(of: store.activeVariations.map(\.id)) { _, _ in ensureValidSelection() }
@@ -241,44 +350,9 @@ private struct HistoryMovementGraphExplorer: View {
         }
     }
 
-    private func variationDeckBadge(for movementId: UUID) -> TapCardDeckBadge? {
-        let variations = store.variations(for: movementId)
-        guard variations.count > 1, let variationId = effectiveVariationId else { return nil }
-        let index = variations.firstIndex { $0.id == variationId } ?? 0
-        return TapCardDeckBadge(oneBasedPosition: index + 1, total: variations.count)
-    }
-
-    private func locationDeckBadge() -> TapCardDeckBadge? {
-        let locations = store.activeLocations
-        guard locations.count > 1, let locationId = effectiveLocationId else { return nil }
-        let index = locations.firstIndex { $0.id == locationId } ?? 0
-        return TapCardDeckBadge(oneBasedPosition: index + 1, total: locations.count)
-    }
-
-    private func moveVariation(movementId: UUID, direction: Int) {
-        guard let variationId = effectiveVariationId else { return }
-        let variations = store.variations(for: movementId)
-        let ids = orderedIDs(
-            currentIDs: variations.map(\.id),
-            preferredOrder: [],
-            fallbackCurrentID: variationId
-        )
-        guard !ids.isEmpty else { return }
-        let currentIndex = ids.firstIndex(of: variationId) ?? 0
-        selectedVariationId = ids[(currentIndex + direction + ids.count) % ids.count]
+    private func selectVariation(movementId: UUID, variationId: UUID) {
+        selectedVariationId = variationId
         selectedLocationId = preferredLocationId(for: movementId, variationId: selectedVariationId)
-    }
-
-    private func moveLocation(movementId: UUID, direction: Int) {
-        guard let locationId = effectiveLocationId else { return }
-        let ids = orderedIDs(
-            currentIDs: store.activeLocations.map(\.id),
-            preferredOrder: [],
-            fallbackCurrentID: locationId
-        )
-        guard !ids.isEmpty else { return }
-        let currentIndex = ids.firstIndex(of: locationId) ?? 0
-        selectedLocationId = ids[(currentIndex + direction + ids.count) % ids.count]
     }
 
     private func preferredMovementId() -> UUID? {

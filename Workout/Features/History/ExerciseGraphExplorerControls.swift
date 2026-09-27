@@ -6,15 +6,13 @@ struct WorkoutExerciseGraphTabContent: View {
     let locationName: String
     let variationItems: [VariationDeckCardItem]
     let locationItems: [LocationHistorySelectorItem]
-    let variationDeckBadge: TapCardDeckBadge?
-    let locationDeckBadge: TapCardDeckBadge?
+    let selectedVariationId: UUID
+    let selectedLocationId: UUID
     @Binding var selectedMetric: ExerciseProgressMetric
     let graphSeries: [ExerciseProgressGraphSeries]
     var graphEmptyMessage = "No graph history for this variation at this gym yet."
-    let onAdvanceVariation: () -> Void
-    let onRetreatVariation: () -> Void
-    let onAdvanceLocation: () -> Void
-    let onRetreatLocation: () -> Void
+    let onSelectVariation: (UUID) -> Void
+    let onSelectLocation: (UUID) -> Void
 
     @State private var isFullscreenPresented = false
 
@@ -22,13 +20,11 @@ struct WorkoutExerciseGraphTabContent: View {
         VStack(alignment: .leading, spacing: 18) {
             GraphExplorerControls(
                 variationItems: variationItems,
-                variationDeckBadge: variationDeckBadge,
                 locationItems: locationItems,
-                locationDeckBadge: locationDeckBadge,
-                onAdvanceVariation: onAdvanceVariation,
-                onRetreatVariation: onRetreatVariation,
-                onAdvanceLocation: onAdvanceLocation,
-                onRetreatLocation: onRetreatLocation
+                selectedVariationId: selectedVariationId,
+                selectedLocationId: selectedLocationId,
+                onSelectVariation: onSelectVariation,
+                onSelectLocation: onSelectLocation
             )
 
             VStack(alignment: .leading, spacing: 10) {
@@ -38,7 +34,7 @@ struct WorkoutExerciseGraphTabContent: View {
                         .foregroundStyle(AppTheme.textSecondary)
                     Spacer()
                     Button {
-                        isFullscreenPresented = true
+                        openFullscreenGraph()
                     } label: {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
                             .font(.headline.weight(.semibold))
@@ -61,8 +57,12 @@ struct WorkoutExerciseGraphTabContent: View {
                     emptyMessage: graphEmptyMessage,
                     compact: true
                 )
+                .onTapGesture(count: 2) {
+                    openFullscreenGraph()
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .fullScreenCover(isPresented: $isFullscreenPresented) {
             LandscapeExerciseGraphFullScreen(
                 movementName: movementName,
@@ -75,6 +75,10 @@ struct WorkoutExerciseGraphTabContent: View {
                 }
             )
         }
+    }
+
+    private func openFullscreenGraph() {
+        isFullscreenPresented = true
     }
 }
 
@@ -208,10 +212,10 @@ private struct LandscapeGraphToolbar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(AppTheme.surface.opacity(0.94))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
@@ -220,13 +224,42 @@ private struct LandscapeGraphToolbar: View {
 
 struct GraphExplorerControls: View {
     let variationItems: [VariationDeckCardItem]
-    let variationDeckBadge: TapCardDeckBadge?
     let locationItems: [LocationHistorySelectorItem]
-    let locationDeckBadge: TapCardDeckBadge?
-    let onAdvanceVariation: () -> Void
-    let onRetreatVariation: () -> Void
-    let onAdvanceLocation: () -> Void
-    let onRetreatLocation: () -> Void
+    let selectedVariationId: UUID
+    let selectedLocationId: UUID
+    let onSelectVariation: (UUID) -> Void
+    let onSelectLocation: (UUID) -> Void
+
+    @State private var isVariationPickerPresented = false
+    @State private var isLocationPickerPresented = false
+
+    private var selectedVariation: VariationDeckCardItem? {
+        variationItems.first { $0.id == selectedVariationId } ?? variationItems.first
+    }
+
+    private var selectedLocation: LocationHistorySelectorItem? {
+        locationItems.first { $0.id == selectedLocationId } ?? locationItems.first
+    }
+
+    private var variationOptions: [ChoicePickerOption] {
+        variationItems.map { item in
+            ChoicePickerOption(
+                id: item.variation.id,
+                title: item.variation.name,
+                subtitle: item.variation.equipmentCategory?.displayName
+            )
+        }
+    }
+
+    private var locationOptions: [ChoicePickerOption] {
+        locationItems.map { item in
+            ChoicePickerOption(
+                id: item.location.id,
+                title: item.location.name,
+                subtitle: item.location.notes
+            )
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -234,75 +267,33 @@ struct GraphExplorerControls: View {
                 .font(.headline)
                 .foregroundStyle(AppTheme.textSecondary)
 
-            VStack(alignment: .leading, spacing: 12) {
-                variationSelector
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                locationSelector
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    variationTrigger
+                    locationTrigger
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    variationTrigger
+                    locationTrigger
+                }
             }
         }
-    }
-
-    private var variationSelector: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Variation")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(AppTheme.textMuted)
-
-            if variationItems.isEmpty {
-                compactEmptyCard(message: "No variations")
-            } else {
-                TapCardPager(
-                    items: variationItems,
-                    deckBadge: variationDeckBadge,
-                    onAdvance: { _ in onAdvanceVariation() },
-                    onRetreat: { _ in onRetreatVariation() }
-                ) { item in
-                    SurfaceCard {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(item.variation.name)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(AppTheme.textPrimary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if let equipmentCategory = item.variation.equipmentCategory {
-                                Text(equipmentCategory.displayName)
-                                    .font(.caption)
-                                    .foregroundStyle(AppTheme.textSecondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-                    }
-                }
-                .frame(minHeight: 118)
-            }
+        .fullScreenCover(isPresented: $isVariationPickerPresented) {
+            ChoicePickerSheet(
+                title: "Choose Variation",
+                options: variationOptions,
+                currentID: selectedVariationId,
+                onDone: onSelectVariation
+            )
         }
-    }
-
-    private var locationSelector: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Gym")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(AppTheme.textMuted)
-
-            if locationItems.isEmpty {
-                compactEmptyCard(message: "No gyms")
-            } else {
-                TapCardPager(
-                    items: locationItems,
-                    deckBadge: locationDeckBadge,
-                    onAdvance: { _ in onAdvanceLocation() },
-                    onRetreat: { _ in onRetreatLocation() }
-                ) { item in
-                    SurfaceCard {
-                        Text(item.location.name)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AppTheme.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-                    }
-                }
-                .frame(minHeight: 118)
-            }
+        .fullScreenCover(isPresented: $isLocationPickerPresented) {
+            ChoicePickerSheet(
+                title: "Choose Gym",
+                options: locationOptions,
+                currentID: selectedLocationId,
+                onDone: onSelectLocation
+            )
         }
     }
 
@@ -312,6 +303,36 @@ struct GraphExplorerControls: View {
                 .font(.caption)
                 .foregroundStyle(AppTheme.textMuted)
                 .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
+        }
+    }
+
+    @ViewBuilder
+    private var variationTrigger: some View {
+        if variationItems.isEmpty {
+            compactEmptyCard(message: "No variations")
+        } else {
+            CompactChoiceTrigger(
+                title: "Variation",
+                value: selectedVariation?.variation.name ?? "Choose",
+                subtitle: selectedVariation?.variation.equipmentCategory?.displayName
+            ) {
+                isVariationPickerPresented = true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var locationTrigger: some View {
+        if locationItems.isEmpty {
+            compactEmptyCard(message: "No gyms")
+        } else {
+            CompactChoiceTrigger(
+                title: "Gym",
+                value: selectedLocation?.location.name ?? "Choose",
+                subtitle: nil
+            ) {
+                isLocationPickerPresented = true
+            }
         }
     }
 }

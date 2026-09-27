@@ -154,18 +154,21 @@ struct WorkoutChecklistView: View {
         }
         .background(AppTheme.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog(
-            "Discard this workout?",
-            isPresented: $showDiscardWorkoutConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Discard Workout", role: .destructive) {
-                store.discardActiveWorkout(sessionId: session.id)
+        .overlay {
+            if showDiscardWorkoutConfirmation {
+                DiscardWorkoutConfirmationDialog(
+                    onDiscard: {
+                        showDiscardWorkoutConfirmation = false
+                        store.discardActiveWorkout(sessionId: session.id)
+                    },
+                    onKeep: {
+                        showDiscardWorkoutConfirmation = false
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
-            Button("Keep Workout", role: .cancel) {}
-        } message: {
-            Text("Nothing will be saved and this session will not appear in History.")
         }
+        .animation(.easeInOut(duration: 0.18), value: showDiscardWorkoutConfirmation)
         .sheet(isPresented: $isAddMovementPresented) {
             NavigationStack {
                 ActiveWorkoutMovementPickerView(
@@ -199,6 +202,52 @@ struct WorkoutChecklistView: View {
     private func resetReorderState() {
         activeDraggedEntryID = nil
         proposedDropIndex = nil
+    }
+}
+
+private struct DiscardWorkoutConfirmationDialog: View {
+    let onDiscard: () -> Void
+    let onKeep: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.46)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onKeep)
+
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Discard this workout?")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(AppTheme.textPrimary)
+                    Text("Nothing will be saved and this session will not appear in History.")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(spacing: 10) {
+                    Button("Discard Workout", action: onDiscard)
+                        .buttonStyle(DestructiveSecondaryButtonStyle())
+
+                    Button("Keep Workout", action: onKeep)
+                        .buttonStyle(SecondaryButtonStyle())
+                }
+            }
+            .padding(22)
+            .frame(maxWidth: 430, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(AppTheme.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
+            .padding(.horizontal, 22)
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+        }
     }
 }
 
@@ -319,9 +368,6 @@ struct ExerciseLoggingView: View {
                 locationId: resolvedHistoryExplorerLocationId(session: session),
                 excluding: session.id
             )
-            let rotatedBrowserSnapshots: [HistorySnapshot] = browserSnapshots.isEmpty
-                ? []
-                : browserSnapshots.rotated(startingAt: selectedHistorySnapshotIndex % browserSnapshots.count)
             let graphVariationId = resolvedGraphVariationId(entry: entry)
             let graphLocationId = resolvedGraphLocationId(session: session)
             let graphSnapshots = store.progressGraphSnapshots(
@@ -344,12 +390,8 @@ struct ExerciseLoggingView: View {
                             session: session,
                             entry: entry,
                             variationDeckItems: variationDeckItems,
-                            variationDeckBadge: variationDeckBadge(for: entry, store: store),
-                            onVariationAdvance: {
-                                store.cycleVariation(sessionId: session.id, entryId: entry.id, direction: 1)
-                            },
-                            onVariationRetreat: {
-                                store.cycleVariation(sessionId: session.id, entryId: entry.id, direction: -1)
+                            onSelectVariation: { variationId in
+                                store.setVariation(sessionId: session.id, entryId: entry.id, variationId: variationId)
                             },
                             onStartEditingSet: { setId, field, initialValue in
                                 startEditing(setId: setId, field: field, initialValue: initialValue)
@@ -408,30 +450,21 @@ struct ExerciseLoggingView: View {
                             lastExactSnapshot: lastExactAtWorkoutGym,
                             explorerVariationItems: explorerVariationItems,
                             explorerLocationItems: explorerLocationItems,
-                            explorerVariationDeckBadge: explorerVariationDeckBadge(session: session, entry: entry),
-                            explorerLocationDeckBadge: explorerLocationDeckBadge(session: session),
-                            browserDisplaySnapshots: rotatedBrowserSnapshots,
+                            selectedVariationId: resolvedHistoryExplorerVariationId(entry: entry),
+                            selectedLocationId: resolvedHistoryExplorerLocationId(session: session),
+                            browserSnapshots: browserSnapshots,
                             browserTotalCount: browserSnapshots.count,
                             browserDisplayIndex: browserSnapshots.isEmpty
                                 ? 0
                                 : (selectedHistorySnapshotIndex % browserSnapshots.count) + 1,
-                            onAdvanceExplorerVariation: {
-                                moveHistoryExplorerVariation(entry: entry, direction: 1)
+                            onSelectExplorerVariation: { variationId in
+                                selectHistoryExplorerVariation(variationId)
                             },
-                            onRetreatExplorerVariation: {
-                                moveHistoryExplorerVariation(entry: entry, direction: -1)
+                            onSelectExplorerLocation: { locationId in
+                                selectHistoryExplorerLocation(locationId)
                             },
-                            onAdvanceExplorerLocation: {
-                                moveHistoryExplorerLocation(session: session, direction: 1)
-                            },
-                            onRetreatExplorerLocation: {
-                                moveHistoryExplorerLocation(session: session, direction: -1)
-                            },
-                            onAdvanceBrowserSnapshot: {
-                                moveHistorySnapshotBrowser(count: browserSnapshots.count, direction: 1)
-                            },
-                            onRetreatBrowserSnapshot: {
-                                moveHistorySnapshotBrowser(count: browserSnapshots.count, direction: -1)
+                            onSelectBrowserSnapshot: { snapshotId in
+                                selectHistorySnapshot(snapshotId, in: browserSnapshots)
                             }
                         )
                     case .graph:
@@ -441,21 +474,15 @@ struct ExerciseLoggingView: View {
                             locationName: store.locationName(graphLocationId),
                             variationItems: graphVariationDeckItems(entry: entry),
                             locationItems: graphLocationDeckItems(session: session),
-                            variationDeckBadge: graphVariationDeckBadge(entry: entry),
-                            locationDeckBadge: graphLocationDeckBadge(session: session),
+                            selectedVariationId: graphVariationId,
+                            selectedLocationId: graphLocationId,
                             selectedMetric: $selectedGraphMetric,
                             graphSeries: graphSeries,
-                            onAdvanceVariation: {
-                                moveGraphVariation(entry: entry, direction: 1)
+                            onSelectVariation: { variationId in
+                                selectGraphVariation(variationId)
                             },
-                            onRetreatVariation: {
-                                moveGraphVariation(entry: entry, direction: -1)
-                            },
-                            onAdvanceLocation: {
-                                moveGraphLocation(session: session, direction: 1)
-                            },
-                            onRetreatLocation: {
-                                moveGraphLocation(session: session, direction: -1)
+                            onSelectLocation: { locationId in
+                                selectGraphLocation(locationId)
                             }
                         )
                     }
@@ -560,41 +587,19 @@ struct ExerciseLoggingView: View {
         return order.compactMap { locationsByID[$0].map(LocationHistorySelectorItem.init) }
     }
 
-    private func moveHistoryExplorerVariation(entry: WorkoutExerciseEntry, direction: Int) {
-        let variations = store.variations(for: entry.performedMovementId)
-        guard !variations.isEmpty else { return }
-
-        let ids = orderedIDs(
-            currentIDs: variations.map(\.id),
-            preferredOrder: [],
-            fallbackCurrentID: resolvedHistoryExplorerVariationId(entry: entry)
-        )
-        let currentIndex = ids.firstIndex(of: resolvedHistoryExplorerVariationId(entry: entry)) ?? 0
-        let nextIndex = (currentIndex + direction + ids.count) % ids.count
-
-        selectedHistoryVariationId = ids[nextIndex]
+    private func selectHistoryExplorerVariation(_ variationId: UUID) {
+        selectedHistoryVariationId = variationId
         selectedHistorySnapshotIndex = 0
     }
 
-    private func moveHistoryExplorerLocation(session: WorkoutSession, direction: Int) {
-        let locations = store.activeLocations
-        guard !locations.isEmpty else { return }
-
-        let ids = orderedIDs(
-            currentIDs: locations.map(\.id),
-            preferredOrder: [],
-            fallbackCurrentID: resolvedHistoryExplorerLocationId(session: session)
-        )
-        let currentIndex = ids.firstIndex(of: resolvedHistoryExplorerLocationId(session: session)) ?? 0
-        let nextIndex = (currentIndex + direction + ids.count) % ids.count
-
-        selectedHistoryLocationId = ids[nextIndex]
+    private func selectHistoryExplorerLocation(_ locationId: UUID) {
+        selectedHistoryLocationId = locationId
         selectedHistorySnapshotIndex = 0
     }
 
-    private func moveHistorySnapshotBrowser(count: Int, direction: Int) {
-        guard count > 0 else { return }
-        selectedHistorySnapshotIndex = (selectedHistorySnapshotIndex + direction + count) % count
+    private func selectHistorySnapshot(_ snapshotId: UUID, in snapshots: [HistorySnapshot]) {
+        guard let index = snapshots.firstIndex(where: { $0.id == snapshotId }) else { return }
+        selectedHistorySnapshotIndex = index
     }
 
     private func resolvedGraphVariationId(entry: WorkoutExerciseEntry) -> UUID {
@@ -647,75 +652,14 @@ struct ExerciseLoggingView: View {
         return order.compactMap { locationsByID[$0].map(LocationHistorySelectorItem.init) }
     }
 
-    private func moveGraphVariation(entry: WorkoutExerciseEntry, direction: Int) {
-        let variations = store.variations(for: entry.performedMovementId)
-        guard !variations.isEmpty else { return }
-
-        let ids = orderedIDs(
-            currentIDs: variations.map(\.id),
-            preferredOrder: [],
-            fallbackCurrentID: resolvedGraphVariationId(entry: entry)
-        )
-        let currentIndex = ids.firstIndex(of: resolvedGraphVariationId(entry: entry)) ?? 0
-        let nextIndex = (currentIndex + direction + ids.count) % ids.count
-
-        selectedGraphVariationId = ids[nextIndex]
+    private func selectGraphVariation(_ variationId: UUID) {
+        selectedGraphVariationId = variationId
         graphFiltersWereCustomized = true
     }
 
-    private func moveGraphLocation(session: WorkoutSession, direction: Int) {
-        let locations = store.activeLocations
-        guard !locations.isEmpty else { return }
-
-        let ids = orderedIDs(
-            currentIDs: locations.map(\.id),
-            preferredOrder: [],
-            fallbackCurrentID: resolvedGraphLocationId(session: session)
-        )
-        let currentIndex = ids.firstIndex(of: resolvedGraphLocationId(session: session)) ?? 0
-        let nextIndex = (currentIndex + direction + ids.count) % ids.count
-
-        selectedGraphLocationId = ids[nextIndex]
+    private func selectGraphLocation(_ locationId: UUID) {
+        selectedGraphLocationId = locationId
         graphFiltersWereCustomized = true
-    }
-
-    private func variationDeckBadge(for entry: WorkoutExerciseEntry, store: AppStore) -> TapCardDeckBadge? {
-        let variations = store.variations(for: entry.performedMovementId)
-        guard variations.count > 1 else { return nil }
-        let index = variations.firstIndex { $0.id == entry.performedVariationId } ?? 0
-        return TapCardDeckBadge(oneBasedPosition: index + 1, total: variations.count)
-    }
-
-    private func explorerVariationDeckBadge(session: WorkoutSession, entry: WorkoutExerciseEntry) -> TapCardDeckBadge? {
-        let variations = store.variations(for: entry.performedMovementId)
-        guard variations.count > 1 else { return nil }
-        let id = resolvedHistoryExplorerVariationId(entry: entry)
-        let index = variations.firstIndex { $0.id == id } ?? 0
-        return TapCardDeckBadge(oneBasedPosition: index + 1, total: variations.count)
-    }
-
-    private func explorerLocationDeckBadge(session: WorkoutSession) -> TapCardDeckBadge? {
-        let locations = store.activeLocations
-        guard locations.count > 1 else { return nil }
-        let id = resolvedHistoryExplorerLocationId(session: session)
-        let index = locations.firstIndex { $0.id == id } ?? 0
-        return TapCardDeckBadge(oneBasedPosition: index + 1, total: locations.count)
-    }
-
-    private func graphVariationDeckBadge(entry: WorkoutExerciseEntry) -> TapCardDeckBadge? {
-        let variations = store.variations(for: entry.performedMovementId)
-        guard variations.count > 1 else { return nil }
-        let id = resolvedGraphVariationId(entry: entry)
-        let index = variations.firstIndex { $0.id == id } ?? 0
-        return TapCardDeckBadge(oneBasedPosition: index + 1, total: variations.count)
-    }
-
-    private func graphLocationDeckBadge(session: WorkoutSession) -> TapCardDeckBadge? {
-        let locations = store.activeLocations
-        guard locations.count > 1 else { return nil }
-        let id = resolvedGraphLocationId(session: session)
-        let index = locations.firstIndex { $0.id == id } ?? 0
-        return TapCardDeckBadge(oneBasedPosition: index + 1, total: locations.count)
     }
 
     private func startEditing(setId: UUID, field: EditingField, initialValue: String) {
@@ -857,12 +801,12 @@ private struct SegmentedExerciseTabPicker: UIViewRepresentable {
 }
 
 private struct ExerciseLogTabContent: View {
+    @EnvironmentObject private var store: AppStore
+
     let session: WorkoutSession
     let entry: WorkoutExerciseEntry
     let variationDeckItems: [VariationDeckCardItem]
-    let variationDeckBadge: TapCardDeckBadge?
-    let onVariationAdvance: () -> Void
-    let onVariationRetreat: () -> Void
+    let onSelectVariation: (UUID) -> Void
     let onStartEditingSet: (UUID, ExerciseLoggingView.EditingField, String) -> Void
     let onScrubActiveChange: (Bool) -> Void
     let onUpdateSetWeight: (UUID, Double) -> Void
@@ -874,6 +818,19 @@ private struct ExerciseLogTabContent: View {
     let onSkip: () -> Void
     let onReplace: () -> Void
     let onComplete: () -> Void
+
+    @State private var isVariationPickerPresented = false
+    @State private var isAddVariationPresented = false
+
+    private var variationOptions: [ChoicePickerOption] {
+        variationDeckItems.map { item in
+            ChoicePickerOption(
+                id: item.variation.id,
+                title: item.variation.name,
+                subtitle: item.variation.equipmentCategory?.displayName ?? entry.performedMovementNameSnapshot
+            )
+        }
+    }
 
     private var statusPillColor: Color {
         switch entry.status {
@@ -920,35 +877,15 @@ private struct ExerciseLogTabContent: View {
                     }
                 }
 
-                TapCardPager(
-                    items: variationDeckItems,
-                    deckBadge: variationDeckBadge,
-                    onAdvance: { _ in onVariationAdvance() },
-                    onRetreat: { _ in onVariationRetreat() }
-                ) { item in
-                    SurfaceCard {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack(alignment: .top) {
-                                Text(item.variation.name)
-                                    .font(.title2.bold())
-                                    .foregroundStyle(AppTheme.textPrimary)
-                                Spacer()
-                                if item.variation.id == entry.plannedVariationId {
-                                    StatusPill(title: "Planned", color: AppTheme.accentSecondary)
-                                }
-                            }
-                            if let equipmentCategory = item.variation.equipmentCategory {
-                                Text(equipmentCategory.displayName)
-                                    .foregroundStyle(AppTheme.textSecondary)
-                            } else {
-                                Text(entry.performedMovementNameSnapshot)
-                                    .foregroundStyle(AppTheme.textSecondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
+                CompactChoiceTrigger(
+                    title: "Variation",
+                    value: entry.performedVariationNameSnapshot,
+                    subtitle: variationDeckItems.first(where: { $0.id == entry.performedVariationId })?.variation.equipmentCategory?.displayName
+                ) {
+                    if !variationOptions.isEmpty {
+                        isVariationPickerPresented = true
                     }
                 }
-                .frame(height: 150)
             }
 
             ExerciseSetsSection(
@@ -993,6 +930,97 @@ private struct ExerciseLogTabContent: View {
             }
             .padding(.top, 8)
         }
+        .fullScreenCover(isPresented: $isVariationPickerPresented) {
+            ChoicePickerSheet(
+                title: "Choose Variation",
+                options: variationOptions,
+                currentID: entry.performedVariationId,
+                bottomActionTitle: "Add Variation",
+                bottomActionSystemImage: "plus",
+                onBottomAction: {
+                    isAddVariationPresented = true
+                },
+                onDone: onSelectVariation
+            )
+        }
+        .sheet(isPresented: $isAddVariationPresented) {
+            NavigationStack {
+                LogVariationEditView(
+                    movementName: entry.performedMovementNameSnapshot,
+                    onCancel: {
+                        isAddVariationPresented = false
+                    },
+                    onSave: { draft in
+                        let variation = store.upsertVariation(
+                            movementId: entry.performedMovementId,
+                            name: draft.name,
+                            equipmentCategory: draft.equipmentCategory,
+                            notes: draft.notes
+                        )
+                        onSelectVariation(variation.id)
+                        isAddVariationPresented = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+private struct LogVariationDraft {
+    var name = ""
+    var equipmentCategory: EquipmentCategory = .dumbbell
+    var notes = ""
+
+    var canSave: Bool {
+        !name.logTrimmed.isEmpty
+    }
+}
+
+private struct LogVariationEditView: View {
+    @State private var draft = LogVariationDraft()
+    let movementName: String
+    let onCancel: () -> Void
+    let onSave: (LogVariationDraft) -> Void
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Variation name", text: $draft.name)
+                Picker("Equipment", selection: $draft.equipmentCategory) {
+                    ForEach(EquipmentCategory.allCases, id: \.self) { type in
+                        Text(type.displayName).tag(type)
+                    }
+                }
+                TextField("Notes", text: $draft.notes, axis: .vertical)
+            } header: {
+                Text(movementName)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background.ignoresSafeArea())
+        .navigationTitle("New Variation")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Cancel", action: onCancel)
+                    .foregroundStyle(AppTheme.textSecondary)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Save") {
+                    var sanitizedDraft = draft
+                    sanitizedDraft.name = draft.name.logTrimmed
+                    onSave(sanitizedDraft)
+                }
+                .disabled(!draft.canSave)
+                .foregroundStyle(AppTheme.accent)
+            }
+        }
+    }
+}
+
+private extension String {
+    var logTrimmed: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -1087,17 +1115,14 @@ private struct ExerciseHistoryTabContent: View {
     let lastExactSnapshot: HistorySnapshot?
     let explorerVariationItems: [VariationDeckCardItem]
     let explorerLocationItems: [LocationHistorySelectorItem]
-    let explorerVariationDeckBadge: TapCardDeckBadge?
-    let explorerLocationDeckBadge: TapCardDeckBadge?
-    let browserDisplaySnapshots: [HistorySnapshot]
+    let selectedVariationId: UUID
+    let selectedLocationId: UUID
+    let browserSnapshots: [HistorySnapshot]
     let browserTotalCount: Int
     let browserDisplayIndex: Int
-    let onAdvanceExplorerVariation: () -> Void
-    let onRetreatExplorerVariation: () -> Void
-    let onAdvanceExplorerLocation: () -> Void
-    let onRetreatExplorerLocation: () -> Void
-    let onAdvanceBrowserSnapshot: () -> Void
-    let onRetreatBrowserSnapshot: () -> Void
+    let onSelectExplorerVariation: (UUID) -> Void
+    let onSelectExplorerLocation: (UUID) -> Void
+    let onSelectBrowserSnapshot: (UUID) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1109,21 +1134,19 @@ private struct ExerciseHistoryTabContent: View {
 
             HistoryExplorerControls(
                 variationItems: explorerVariationItems,
-                variationDeckBadge: explorerVariationDeckBadge,
                 locationItems: explorerLocationItems,
-                locationDeckBadge: explorerLocationDeckBadge,
-                onAdvanceVariation: onAdvanceExplorerVariation,
-                onRetreatVariation: onRetreatExplorerVariation,
-                onAdvanceLocation: onAdvanceExplorerLocation,
-                onRetreatLocation: onRetreatExplorerLocation
+                selectedVariationId: selectedVariationId,
+                selectedLocationId: selectedLocationId,
+                title: "Explore History",
+                onSelectVariation: onSelectExplorerVariation,
+                onSelectLocation: onSelectExplorerLocation
             )
 
             SelectedHistoryBrowser(
-                displaySnapshots: browserDisplaySnapshots,
+                snapshots: browserSnapshots,
                 totalCount: browserTotalCount,
                 displayIndex: browserDisplayIndex,
-                onAdvanceSnapshot: onAdvanceBrowserSnapshot,
-                onRetreatSnapshot: onRetreatBrowserSnapshot
+                onSelectSnapshot: onSelectBrowserSnapshot
             )
         }
     }
@@ -1172,89 +1195,77 @@ private struct LastExactMatchRecommendationCard: View {
 
 private struct HistoryExplorerControls: View {
     let variationItems: [VariationDeckCardItem]
-    let variationDeckBadge: TapCardDeckBadge?
     let locationItems: [LocationHistorySelectorItem]
-    let locationDeckBadge: TapCardDeckBadge?
-    let onAdvanceVariation: () -> Void
-    let onRetreatVariation: () -> Void
-    let onAdvanceLocation: () -> Void
-    let onRetreatLocation: () -> Void
+    let selectedVariationId: UUID
+    let selectedLocationId: UUID
+    var title = "Explore History"
+    let onSelectVariation: (UUID) -> Void
+    let onSelectLocation: (UUID) -> Void
+
+    @State private var isVariationPickerPresented = false
+    @State private var isLocationPickerPresented = false
+
+    private var selectedVariation: VariationDeckCardItem? {
+        variationItems.first { $0.id == selectedVariationId } ?? variationItems.first
+    }
+
+    private var selectedLocation: LocationHistorySelectorItem? {
+        locationItems.first { $0.id == selectedLocationId } ?? locationItems.first
+    }
+
+    private var variationOptions: [ChoicePickerOption] {
+        variationItems.map { item in
+            ChoicePickerOption(
+                id: item.variation.id,
+                title: item.variation.name,
+                subtitle: item.variation.equipmentCategory?.displayName
+            )
+        }
+    }
+
+    private var locationOptions: [ChoicePickerOption] {
+        locationItems.map { item in
+            ChoicePickerOption(
+                id: item.location.id,
+                title: item.location.name,
+                subtitle: item.location.notes
+            )
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Explore History")
+            Text(title)
                 .font(.headline)
                 .foregroundStyle(AppTheme.textSecondary)
 
-            VStack(alignment: .leading, spacing: 12) {
-                variationSelector
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                locationSelector
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    variationTrigger
+                    locationTrigger
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    variationTrigger
+                    locationTrigger
+                }
             }
         }
-    }
-
-    private var variationSelector: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Variation")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(AppTheme.textMuted)
-
-            if variationItems.isEmpty {
-                compactEmptyCard(message: "No variations")
-            } else {
-                TapCardPager(
-                    items: variationItems,
-                    deckBadge: variationDeckBadge,
-                    onAdvance: { _ in onAdvanceVariation() },
-                    onRetreat: { _ in onRetreatVariation() }
-                ) { item in
-                    SurfaceCard {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(item.variation.name)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(AppTheme.textPrimary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if let equipmentCategory = item.variation.equipmentCategory {
-                                Text(equipmentCategory.displayName)
-                                    .font(.caption)
-                                    .foregroundStyle(AppTheme.textSecondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-                    }
-                }
-                .frame(minHeight: 118)
-            }
+        .fullScreenCover(isPresented: $isVariationPickerPresented) {
+            ChoicePickerSheet(
+                title: "Choose Variation",
+                options: variationOptions,
+                currentID: selectedVariationId,
+                onDone: onSelectVariation
+            )
         }
-    }
-
-    private var locationSelector: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Gym")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(AppTheme.textMuted)
-
-            if locationItems.isEmpty {
-                compactEmptyCard(message: "No gyms")
-            } else {
-                TapCardPager(
-                    items: locationItems,
-                    deckBadge: locationDeckBadge,
-                    onAdvance: { _ in onAdvanceLocation() },
-                    onRetreat: { _ in onRetreatLocation() }
-                ) { item in
-                    SurfaceCard {
-                        Text(item.location.name)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AppTheme.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-                    }
-                }
-                .frame(minHeight: 118)
-            }
+        .fullScreenCover(isPresented: $isLocationPickerPresented) {
+            ChoicePickerSheet(
+                title: "Choose Gym",
+                options: locationOptions,
+                currentID: selectedLocationId,
+                onDone: onSelectLocation
+            )
         }
     }
 
@@ -1266,20 +1277,91 @@ private struct HistoryExplorerControls: View {
                 .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
         }
     }
+
+    @ViewBuilder
+    private var variationTrigger: some View {
+        if variationItems.isEmpty {
+            compactEmptyCard(message: "No variations")
+        } else {
+            CompactChoiceTrigger(
+                title: "Variation",
+                value: selectedVariation?.variation.name ?? "Choose",
+                subtitle: selectedVariation?.variation.equipmentCategory?.displayName
+            ) {
+                isVariationPickerPresented = true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var locationTrigger: some View {
+        if locationItems.isEmpty {
+            compactEmptyCard(message: "No gyms")
+        } else {
+            CompactChoiceTrigger(
+                title: "Gym",
+                value: selectedLocation?.location.name ?? "Choose",
+                subtitle: nil
+            ) {
+                isLocationPickerPresented = true
+            }
+        }
+    }
 }
 
 private struct SelectedHistoryBrowser: View {
-    let displaySnapshots: [HistorySnapshot]
+    let snapshots: [HistorySnapshot]
     let totalCount: Int
     let displayIndex: Int
-    let onAdvanceSnapshot: () -> Void
-    let onRetreatSnapshot: () -> Void
+    let onSelectSnapshot: (UUID) -> Void
+
+    @State private var isSnapshotPickerPresented = false
+
+    private var selectedSnapshot: HistorySnapshot? {
+        guard !snapshots.isEmpty else { return nil }
+        let index = min(max(displayIndex - 1, 0), snapshots.count - 1)
+        return snapshots[index]
+    }
+
+    private var snapshotOptions: [ChoicePickerOption] {
+        snapshots.map { snapshot in
+            ChoicePickerOption(
+                id: snapshot.id,
+                title: snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted),
+                subtitle: "\(snapshot.locationName) • \(snapshot.summary)"
+            )
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Selected History")
-                .font(.headline)
-                .foregroundStyle(AppTheme.textSecondary)
+            HStack(alignment: .center) {
+                Text("Selected History")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textSecondary)
+
+                Spacer()
+
+                if let selectedSnapshot, totalCount > 1 {
+                    Button {
+                        isSnapshotPickerPresented = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("\(displayIndex) of \(totalCount)")
+                                .font(.caption.weight(.bold))
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption.weight(.bold))
+                        }
+                        .foregroundStyle(AppTheme.accent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(AppTheme.accent.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Choose History")
+                    .accessibilityValue(selectedSnapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))
+                }
+            }
 
             if totalCount == 0 {
                 SurfaceCard {
@@ -1293,24 +1375,23 @@ private struct SelectedHistoryBrowser: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            } else {
-                TapCardPager(
-                    items: displaySnapshots,
-                    deckBadge: totalCount > 1 ? TapCardDeckBadge(oneBasedPosition: displayIndex, total: totalCount) : nil,
-                    onAdvance: { _ in onAdvanceSnapshot() },
-                    onRetreat: { _ in onRetreatSnapshot() }
-                ) { snapshot in
+            } else if let selectedSnapshot {
+                Button {
+                    if totalCount > 1 {
+                        isSnapshotPickerPresented = true
+                    }
+                } label: {
                     SurfaceCard {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text(snapshot.variationName)
+                            Text(selectedSnapshot.variationName)
                                 .font(.title3.bold())
                                 .foregroundStyle(AppTheme.textPrimary)
-                            Text("\(snapshot.locationName) • \(snapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))")
+                            Text("\(selectedSnapshot.locationName) • \(selectedSnapshot.sessionDate.formatted(date: .abbreviated, time: .omitted))")
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.textSecondary)
 
                             VStack(alignment: .leading, spacing: 10) {
-                                ForEach(snapshot.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
+                                ForEach(selectedSnapshot.sets.sorted(by: { $0.setNumber < $1.setNumber })) { set in
                                     HistorySetRow(set: set)
                                 }
                             }
@@ -1318,8 +1399,16 @@ private struct SelectedHistoryBrowser: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: 280, alignment: .top)
+                .buttonStyle(.plain)
             }
+        }
+        .fullScreenCover(isPresented: $isSnapshotPickerPresented) {
+            ChoicePickerSheet(
+                title: "Choose History",
+                options: snapshotOptions,
+                currentID: selectedSnapshot?.id ?? snapshots[0].id,
+                onDone: onSelectSnapshot
+            )
         }
     }
 }

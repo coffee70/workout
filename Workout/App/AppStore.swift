@@ -291,6 +291,11 @@ final class AppStore: ObservableObject {
         Haptics.medium()
     }
 
+    func setVariation(sessionId: UUID, entryId: UUID, variationId: UUID) {
+        guard let variation = appData.variations.first(where: { $0.id == variationId }) else { return }
+        setVariation(sessionId: sessionId, entryId: entryId, variation: variation)
+    }
+
     func addSet(sessionId: UUID, entryId: UUID) {
         mutateEntry(sessionId: sessionId, entryId: entryId) { entry in
             let previous = entry.sets.sorted { $0.setNumber < $1.setNumber }.last
@@ -546,18 +551,24 @@ final class AppStore: ObservableObject {
         touch()
     }
 
-    func upsertVariation(id: UUID? = nil, movementId: UUID, name: String, equipmentCategory: EquipmentCategory?, notes: String? = nil) {
+    @discardableResult
+    func upsertVariation(id: UUID? = nil, movementId: UUID, name: String, equipmentCategory: EquipmentCategory?, notes: String? = nil) -> Variation {
         let now = Date()
         if let id, let index = appData.variations.firstIndex(where: { $0.id == id }) {
             appData.variations[index].movementId = movementId
-            appData.variations[index].name = name
+            appData.variations[index].name = name.trimmed
             appData.variations[index].equipmentCategory = equipmentCategory
             appData.variations[index].notes = notes?.nilIfBlank
             appData.variations[index].updatedAt = now
+            let variation = appData.variations[index]
+            touch()
+            return variation
         } else {
-            appData.variations.append(Variation(id: UUID(), movementId: movementId, name: name, equipmentCategory: equipmentCategory, notes: notes?.nilIfBlank, isArchived: false, createdAt: now, updatedAt: now))
+            let variation = Variation(id: UUID(), movementId: movementId, name: name.trimmed, equipmentCategory: equipmentCategory, notes: notes?.nilIfBlank, isArchived: false, createdAt: now, updatedAt: now)
+            appData.variations.append(variation)
+            touch()
+            return variation
         }
-        touch()
     }
 
     func archiveVariation(_ id: UUID) {

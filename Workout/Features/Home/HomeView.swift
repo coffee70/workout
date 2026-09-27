@@ -82,11 +82,23 @@ struct StartWorkoutView: View {
 
     @State private var selectedDayId: UUID?
     @State private var selectedLocationIndex = 0
+    @State private var isLocationPickerPresented = false
 
     var regimen: Regimen? { store.currentRegimen }
-    var orderedLocations: [Location] {
-        guard !store.activeLocations.isEmpty else { return [] }
-        return store.activeLocations.rotated(startingAt: selectedLocationIndex)
+
+    private var selectedLocation: Location? {
+        guard store.activeLocations.indices.contains(selectedLocationIndex) else { return store.activeLocations.first }
+        return store.activeLocations[selectedLocationIndex]
+    }
+
+    private var locationOptions: [ChoicePickerOption] {
+        store.activeLocations.map { location in
+            ChoicePickerOption(
+                id: location.id,
+                title: location.name,
+                subtitle: location.notes
+            )
+        }
     }
 
     var body: some View {
@@ -128,32 +140,31 @@ struct StartWorkoutView: View {
                                     .foregroundStyle(AppTheme.textMuted)
                             }
 
-                            TapCardPager(
-                                items: orderedLocations,
-                                deckBadge: store.activeLocations.count > 1
-                                    ? TapCardDeckBadge(oneBasedPosition: selectedLocationIndex + 1, total: store.activeLocations.count)
-                                    : nil,
-                                onAdvance: { _ in
-                                    guard !store.activeLocations.isEmpty else { return }
-                                    selectedLocationIndex = (selectedLocationIndex + 1) % store.activeLocations.count
-                                },
-                                onRetreat: { _ in
-                                    guard !store.activeLocations.isEmpty else { return }
-                                    selectedLocationIndex = (selectedLocationIndex - 1 + store.activeLocations.count) % store.activeLocations.count
-                                }
-                            ) { location in
+                            if let selectedLocation {
                                 SurfaceCard {
                                     VStack(alignment: .leading, spacing: 10) {
-                                        Text(location.name)
+                                        Text(selectedLocation.name)
                                             .font(.largeTitle.bold())
                                             .foregroundStyle(AppTheme.textPrimary)
-                                        Text(location.notes ?? "Use this location to set the workout context.")
+                                        Text(selectedLocation.notes ?? "Use this location to set the workout context.")
                                             .foregroundStyle(AppTheme.textSecondary)
+
+                                        if store.activeLocations.count > 1 {
+                                            Button {
+                                                isLocationPickerPresented = true
+                                            } label: {
+                                                HStack(spacing: 8) {
+                                                    Text("Change Gym")
+                                                    Image(systemName: "chevron.up.chevron.down")
+                                                }
+                                            }
+                                            .buttonStyle(SecondaryButtonStyle())
+                                            .padding(.top, 6)
+                                        }
                                     }
-                                    .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                             }
-                            .frame(height: 220)
                         }
                     }
                 }
@@ -162,9 +173,8 @@ struct StartWorkoutView: View {
                     let defaultDayId = selectedDayId ?? regimen?.days.first?.id
                     guard let defaultDayId,
                           let day = regimen?.days.first(where: { $0.id == defaultDayId }),
-                          !store.activeLocations.isEmpty else { return }
-                    let location = store.activeLocations[selectedLocationIndex]
-                    store.startWorkout(day: day, location: location)
+                          let selectedLocation else { return }
+                    store.startWorkout(day: day, location: selectedLocation)
                     dismiss()
                 }
                 .buttonStyle(PrimaryButtonStyle())
@@ -173,6 +183,18 @@ struct StartWorkoutView: View {
             .padding()
         }
         .background(AppTheme.background.ignoresSafeArea())
+        .fullScreenCover(isPresented: $isLocationPickerPresented) {
+            if let currentID = selectedLocation?.id {
+                ChoicePickerSheet(
+                    title: "Choose Gym",
+                    options: locationOptions,
+                    currentID: currentID
+                ) { locationId in
+                    guard let index = store.activeLocations.firstIndex(where: { $0.id == locationId }) else { return }
+                    selectedLocationIndex = index
+                }
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Close") { dismiss() }
